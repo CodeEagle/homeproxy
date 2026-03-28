@@ -70,14 +70,6 @@ jobs:
           ref: 'master'
           path: 'build-source'
 
-      - name: Checkout apk
-        uses: actions/checkout@v6
-        with:
-          repository: 'alpinelinux/apk-tools'
-          path: 'apk-tools'
-          fetch-depth: 0
-          ref: 'b5a31c0d865342ad80be10d68f1bb3d3ad9b0866'
-
       - name: Checkout po2lmo
         uses: actions/checkout@v6
         with:
@@ -100,24 +92,7 @@ jobs:
         run: |
           sudo -E rm -rf /var/lib/man-db/auto-update
           sudo -E apt-get update -qq
-          sudo -E apt-get install -y build-essential curl fakeroot libssl-dev lua5.1 meson ninja-build
-
-          pushd apk-tools
-          meson setup build \
-            -Db_lto=true \
-            -Dcompressed-help=false \
-            -Ddocs=disabled \
-            -Dhelp=enabled \
-            -Dlua_version=5.1 \
-            -Ddefault_library=static \
-            -Durl_backend=wget \
-            -Dzstd=false \
-            -Dpython=disabled \
-            -Dtests=disabled \
-            -Dcrypto_backend=openssl
-          ninja -C build
-          sudo -E meson install -C build --strip
-          popd
+          sudo -E apt-get install -y build-essential curl fakeroot
 
           pushd po2lmo/modules/luci-base/src
           make po2lmo
@@ -130,19 +105,11 @@ jobs:
       - name: Build ipk file
         run: |
           pushd build-source/.github
-          fakeroot bash build-ipk.sh apk "${{ github.event_name }}"
           fakeroot bash build-ipk.sh ipk "${{ github.event_name }}"
-          echo "APK_ASSET_NAME=$(ls *.apk)" >> $GITHUB_ENV
           echo "IPK_ASSET_NAME=$(ls *.ipk)" >> $GITHUB_ENV
+          echo "RELEASE_TAG=homeproxy-ce-$(basename "$(ls *.ipk)" .ipk)" >> $GITHUB_ENV
+          echo "RELEASE_NAME=HomeProxy CE $(basename "$(ls *.ipk)" .ipk)" >> $GITHUB_ENV
           popd
-
-      - name: Publishing APK files to GitHub Artifacts
-        uses: actions/upload-artifact@v7
-        if: github.event_name != 'release'
-        with:
-          name: ${{ env.APK_ASSET_NAME }}
-          path: build-source/.github/${{ env.APK_ASSET_NAME }}
-          archive: false
 
       - name: Publishing IPK files to GitHub Artifacts
         uses: actions/upload-artifact@v7
@@ -157,26 +124,23 @@ jobs:
         if: github.event_name == 'release'
         with:
           repo_token: ${{ github.token }}
-          file: build-source/.github/luci-app-homeproxy-ce_*.*
-          file_glob: true
+          file: build-source/.github/${{ env.IPK_ASSET_NAME }}
           tag: ${{ github.ref }}
 
-      - name: Publish nightly release assets
+      - name: Publish commit release
         uses: softprops/action-gh-release@v2
         if: github.event_name != 'release'
         with:
-          tag_name: homeproxy-ce-nightly
-          name: HomeProxy CE Nightly
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_NAME }}
           body: |
-            Automated latest build of HomeProxy CE.
+            Automated build of HomeProxy CE.
 
             Source branch: ${{ github.ref_name }}
             Patch head: ${{ github.sha }}
             Upstream patched commit: ${{ env.PATCHED_COMMIT }}
-          prerelease: true
+          prerelease: false
           make_latest: false
           generate_release_notes: false
-          files: |
-            build-source/.github/luci-app-homeproxy-ce_*.apk
-            build-source/.github/luci-app-homeproxy-ce_*.ipk
+          files: build-source/.github/${{ env.IPK_ASSET_NAME }}
           fail_on_unmatched_files: true
