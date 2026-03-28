@@ -13,7 +13,7 @@
 'require validation';
 'require view';
 
-'require homeproxy as hp';
+'require homeproxyce as hp';
 'require tools.firewall as fwtool';
 'require tools.widgets as widgets';
 
@@ -25,24 +25,24 @@ const callServiceList = rpc.declare({
 });
 
 const callReadDomainList = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.homeproxyce',
 	method: 'acllist_read',
 	params: ['type'],
 	expect: { '': {} }
 });
 
 const callWriteDomainList = rpc.declare({
-	object: 'luci.homeproxy',
+	object: 'luci.homeproxyce',
 	method: 'acllist_write',
 	params: ['type', 'content'],
 	expect: { '': {} }
 });
 
 function getServiceStatus() {
-	return L.resolveDefault(callServiceList('homeproxy'), {}).then((res) => {
+	return L.resolveDefault(callServiceList('homeproxy-ce'), {}).then((res) => {
 		let isRunning = false;
 		try {
-			isRunning = res['homeproxy']['instances']['sing-box-c']['running'];
+			isRunning = res['homeproxy-ce']['instances']['sing-box-c']['running'];
 		} catch (e) { }
 		return isRunning;
 	});
@@ -75,7 +75,7 @@ let stubValidator = {
 return view.extend({
 	load() {
 		return Promise.all([
-			uci.load('homeproxy'),
+			uci.load('homeproxy-ce'),
 			hp.getBuiltinFeatures(),
 			network.getHostHints()
 		]);
@@ -98,7 +98,7 @@ return view.extend({
 					String.format('[%s]', nodeaddr) : nodeaddr) + ':' + nodeport));
 		});
 
-		m = new form.Map('homeproxy', _('HomeProxy'),
+		m = new form.Map('homeproxy-ce', _('HomeProxy CE'),
 			_('The modern ImmortalWrt proxy platform for ARM64/AMD64.'));
 
 		s = m.section(form.TypedSection);
@@ -312,8 +312,8 @@ return view.extend({
 		}
 		so.value('system', _('System'));
 		so.default = 'system';
-		so.depends('homeproxy.config.proxy_mode', 'redirect_tun');
-		so.depends('homeproxy.config.proxy_mode', 'tun');
+		so.depends('homeproxy-ce.config.proxy_mode', 'redirect_tun');
+		so.depends('homeproxy-ce.config.proxy_mode', 'tun');
 		so.rmempty = false;
 		so.onchange = function(ev, section_id, value) {
 			let desc = ev.target.nextElementSibling;
@@ -336,9 +336,9 @@ return view.extend({
 			_('In seconds.'));
 		so.datatype = 'uinteger';
 		so.placeholder = '300';
-		so.depends('homeproxy.config.proxy_mode', 'redirect_tproxy');
-		so.depends('homeproxy.config.proxy_mode', 'redirect_tun');
-		so.depends('homeproxy.config.proxy_mode', 'tun');
+		so.depends('homeproxy-ce.config.proxy_mode', 'redirect_tproxy');
+		so.depends('homeproxy-ce.config.proxy_mode', 'redirect_tun');
+		so.depends('homeproxy-ce.config.proxy_mode', 'tun');
 
 		so = ss.option(form.Flag, 'bypass_cn_traffic', _('Bypass CN traffic'),
 			_('Bypass mainland China traffic via firewall rules by default.'));
@@ -1429,7 +1429,7 @@ return view.extend({
 		so.depends('lan_proxy_mode', 'except_listed');
 
 		so = fwtool.addIPOption(ss, 'lan_ip_policy', 'lan_direct_ipv6_ips', _('Direct IPv6 IP-s'), null, 'ipv6', hosts, true);
-		so.depends({'lan_proxy_mode': 'except_listed', 'homeproxy.config.ipv6_support': '1'});
+		so.depends({'lan_proxy_mode': 'except_listed', 'homeproxy-ce.config.ipv6_support': '1'});
 
 		so = fwtool.addMACOption(ss, 'lan_ip_policy', 'lan_direct_mac_addrs', _('Direct MAC-s'), null, hosts);
 		so.depends('lan_proxy_mode', 'except_listed');
@@ -1438,7 +1438,7 @@ return view.extend({
 		so.depends('lan_proxy_mode', 'listed_only');
 
 		so = fwtool.addIPOption(ss, 'lan_ip_policy', 'lan_proxy_ipv6_ips', _('Proxy IPv6 IP-s'), null, 'ipv6', hosts, true);
-		so.depends({'lan_proxy_mode': 'listed_only', 'homeproxy.config.ipv6_support': '1'});
+		so.depends({'lan_proxy_mode': 'listed_only', 'homeproxy-ce.config.ipv6_support': '1'});
 
 		so = fwtool.addMACOption(ss, 'lan_ip_policy', 'lan_proxy_mac_addrs', _('Proxy MAC-s'), null, hosts);
 		so.depends('lan_proxy_mode', 'listed_only');
@@ -1446,18 +1446,18 @@ return view.extend({
 		so = fwtool.addIPOption(ss, 'lan_ip_policy', 'lan_gaming_mode_ipv4_ips', _('Gaming mode IPv4 IP-s'), null, 'ipv4', hosts, true);
 
 		so = fwtool.addIPOption(ss, 'lan_ip_policy', 'lan_gaming_mode_ipv6_ips', _('Gaming mode IPv6 IP-s'), null, 'ipv6', hosts, true);
-		so.depends('homeproxy.config.ipv6_support', '1');
+		so.depends('homeproxy-ce.config.ipv6_support', '1');
 
 		so = fwtool.addMACOption(ss, 'lan_ip_policy', 'lan_gaming_mode_mac_addrs', _('Gaming mode MAC-s'), null, hosts);
 
 		so = fwtool.addIPOption(ss, 'lan_ip_policy', 'lan_global_proxy_ipv4_ips', _('Global proxy IPv4 IP-s'), null, 'ipv4', hosts, true);
-		so.depends({'homeproxy.config.routing_mode': 'custom', '!reverse': true});
+		so.depends({'homeproxy-ce.config.routing_mode': 'custom', '!reverse': true});
 
 		so = fwtool.addIPOption(ss, 'lan_ip_policy', 'lan_global_proxy_ipv6_ips', _('Global proxy IPv6 IP-s'), null, 'ipv6', hosts, true);
-		so.depends({'homeproxy.config.routing_mode': /^((?!custom).)+$/, 'homeproxy.config.ipv6_support': '1'});
+		so.depends({'homeproxy-ce.config.routing_mode': /^((?!custom).)+$/, 'homeproxy-ce.config.ipv6_support': '1'});
 
 		so = fwtool.addMACOption(ss, 'lan_ip_policy', 'lan_global_proxy_mac_addrs', _('Global proxy MAC-s'), null, hosts);
-		so.depends({'homeproxy.config.routing_mode': 'custom', '!reverse': true});
+		so.depends({'homeproxy-ce.config.routing_mode': 'custom', '!reverse': true});
 		/* LAN IP policy end */
 
 		/* WAN IP policy start */
@@ -1468,14 +1468,14 @@ return view.extend({
 
 		so = ss.taboption('wan_ip_policy', form.DynamicList, 'wan_proxy_ipv6_ips', _('Proxy IPv6 IP-s'));
 		so.datatype = 'or(ip6addr, cidr6)';
-		so.depends('homeproxy.config.ipv6_support', '1');
+		so.depends('homeproxy-ce.config.ipv6_support', '1');
 
 		so = ss.taboption('wan_ip_policy', form.DynamicList, 'wan_direct_ipv4_ips', _('Direct IPv4 IP-s'));
 		so.datatype = 'or(ip4addr, cidr4)';
 
 		so = ss.taboption('wan_ip_policy', form.DynamicList, 'wan_direct_ipv6_ips', _('Direct IPv6 IP-s'));
 		so.datatype = 'or(ip6addr, cidr6)';
-		so.depends('homeproxy.config.ipv6_support', '1');
+		so.depends('homeproxy-ce.config.ipv6_support', '1');
 		/* WAN IP policy end */
 
 		/* Proxy domain list start */
@@ -1485,7 +1485,7 @@ return view.extend({
 		so.rows = 10;
 		so.monospace = true;
 		so.datatype = 'hostname';
-		so.depends({'homeproxy.config.routing_mode': 'custom', '!reverse': true});
+		so.depends({'homeproxy-ce.config.routing_mode': 'custom', '!reverse': true});
 		so.load = function(/* ... */) {
 			return L.resolveDefault(callReadDomainList('proxy_list')).then((res) => {
 				return res.content;
@@ -1517,7 +1517,7 @@ return view.extend({
 		so.rows = 10;
 		so.monospace = true;
 		so.datatype = 'hostname';
-		so.depends({'homeproxy.config.routing_mode': 'custom', '!reverse': true});
+		so.depends({'homeproxy-ce.config.routing_mode': 'custom', '!reverse': true});
 		so.load = function(/* ... */) {
 			return L.resolveDefault(callReadDomainList('direct_list')).then((res) => {
 				return res.content;
@@ -1542,6 +1542,44 @@ return view.extend({
 		}
 		/* Direct domain list end */
 		/* ACL settings end */
+
+		/* Clash API settings start */
+		s.tab('clash_api', _('Clash API'));
+		o = s.taboption('clash_api', form.SectionValue, '_experimental', form.NamedSection, 'experimental', 'homeproxy');
+		ss = o.subsection;
+		ss.anonymous = true;
+
+		so = ss.option(form.Flag, 'enable_clash_api', _('Enable Clash API'));
+		so.default = so.disabled;
+		so.rmempty = false;
+
+		so = ss.option(form.Value, 'external_controller', _('External Controller'),
+			_('Listen address for Clash API, for example <code>0.0.0.0:9090</code>.'));
+		so.placeholder = '0.0.0.0:9090';
+		so.depends('enable_clash_api', '1');
+
+		so = ss.option(form.Value, 'secret', _('Secret'));
+		so.password = true;
+		so.depends('enable_clash_api', '1');
+
+		so = ss.option(form.Value, 'external_ui', _('External UI Path'));
+		so.placeholder = '/www/clash-dashboard';
+		so.depends('enable_clash_api', '1');
+
+		so = ss.option(form.Value, 'external_ui_download_url', _('UI Download link'));
+		so.depends('enable_clash_api', '1');
+
+		so = ss.option(form.Value, 'external_ui_download_detour', _('UI Download detour'));
+		so.placeholder = 'direct-out';
+		so.depends('enable_clash_api', '1');
+
+		so = ss.option(form.ListValue, 'default_mode', _('Default mode'));
+		so.value('', _('-- Please choose --'));
+		so.value('rule', _('Rule'));
+		so.value('direct', _('Direct'));
+		so.value('global', _('Global'));
+		so.depends('enable_clash_api', '1');
+		/* Clash API settings end */
 
 		return m.render();
 	}

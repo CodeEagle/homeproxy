@@ -29,11 +29,145 @@ const css = '				\
 	background-color: #33ccff;	\
 }';
 
-const hp_dir = '/var/run/homeproxy';
+const hp_dir = '/var/run/homeproxy-ce';
+
+const callServiceList = rpc.declare({
+	object: 'service',
+	method: 'list',
+	params: ['name'],
+	expect: { '': {} }
+});
+
+const callServiceAction = rpc.declare({
+	object: 'luci.homeproxyce',
+	method: 'service_action',
+	params: ['action'],
+	expect: { '': {} }
+});
+
+const callConfigExport = rpc.declare({
+	object: 'luci.homeproxyce',
+	method: 'config_export',
+	expect: { '': {} }
+});
+
+const callConfigImport = rpc.declare({
+	object: 'luci.homeproxyce',
+	method: 'config_import',
+	expect: { '': {} }
+});
+
+const callConfigImportFromHomeProxy = rpc.declare({
+	object: 'luci.homeproxyce',
+	method: 'config_import_from_homeproxy',
+	expect: { '': {} }
+});
+
+function getServiceStatus() {
+	return L.resolveDefault(callServiceList('homeproxy-ce'), {}).then((res) => {
+		let isRunning = false;
+		try {
+			isRunning = res['homeproxy-ce']['instances']['sing-box-c']['running'] ||
+				res['homeproxy-ce']['instances']['sing-box-s']['running'];
+		} catch (e) { }
+		return isRunning;
+	});
+}
+
+function renderServiceStatus(isRunning) {
+	let spanTemp = '<em><span style="color:%s"><strong>%s %s</strong></span></em>';
+
+	return isRunning
+		? spanTemp.format('green', _('HomeProxy CE'), _('RUNNING'))
+		: spanTemp.format('red', _('HomeProxy CE'), _('NOT RUNNING'));
+}
+
+function renderServiceControl(o) {
+	o.default = E('div', { 'style': 'cbi-value-field' }, [
+		E('button', {
+			'class': 'btn cbi-button cbi-button-apply',
+			'click': ui.createHandlerFn(this, () => {
+				return L.resolveDefault(callServiceAction('start'), {}).then(() => o.map.reset());
+			})
+		}, [ _('Start') ]),
+		' ',
+		E('button', {
+			'class': 'btn cbi-button cbi-button-reset',
+			'click': ui.createHandlerFn(this, () => {
+				return L.resolveDefault(callServiceAction('stop'), {}).then(() => o.map.reset());
+			})
+		}, [ _('Stop') ])
+	]);
+}
+
+function downloadBackup(filename, content) {
+	const bytes = Uint8Array.from(atob(content), (c) => c.charCodeAt(0));
+	const blob = new Blob([bytes], { type: 'application/gzip' });
+	const url = URL.createObjectURL(blob);
+	const link = E('a', { href: url, download: filename });
+	document.body.appendChild(link);
+	link.click();
+	link.remove();
+	setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function renderConfigActions(o) {
+	const fileInput = E('input', {
+		type: 'file',
+		accept: '.tar.gz,.tgz,application/gzip,application/x-gzip',
+		style: 'display:none',
+		change: ui.createHandlerFn(this, (ev) => {
+			return ui.uploadFile('/tmp/homeproxy-ce-backup.tar.gz', ev.target).then(() => {
+				return L.resolveDefault(callConfigImport(), {}).then((res) => {
+					if (res.result === true)
+						ui.addNotification(null, E('p', _('Successfully imported homeproxy-ce configuration.')));
+					else
+						ui.addNotification(null, E('p', _('Failed to import homeproxy-ce configuration: %s').format(res.error || _('Unknown error.'))));
+
+					return o.map.reset();
+				});
+			}).catch((e) => ui.addNotification(null, E('p', e.message)));
+		})
+	});
+
+	o.default = E('div', { 'style': 'cbi-value-field' }, [
+		E('button', {
+			'class': 'btn cbi-button cbi-button-action',
+			'click': ui.createHandlerFn(this, () => {
+				return L.resolveDefault(callConfigImportFromHomeProxy(), {}).then((res) => {
+					if (res.result === true)
+						ui.addNotification(null, E('p', _('Successfully imported configuration from HomeProxy.')));
+					else
+						ui.addNotification(null, E('p', _('Failed to import configuration from HomeProxy: %s').format(res.error || _('Unknown error.'))));
+
+					return o.map.reset();
+				});
+			})
+		}, [ _('Import from HomeProxy') ]),
+		' ',
+		E('button', {
+			'class': 'btn cbi-button cbi-button-action',
+			'click': ui.createHandlerFn(this, () => {
+				return L.resolveDefault(callConfigExport(), {}).then((res) => {
+					if (res.result === true && res.content)
+						downloadBackup(res.filename, res.content);
+					else
+						ui.addNotification(null, E('p', _('Failed to export homeproxy-ce configuration.')));
+				});
+			})
+		}, [ _('Export') ]),
+		' ',
+		E('button', {
+			'class': 'btn cbi-button cbi-button-action',
+			'click': ui.createHandlerFn(this, () => fileInput.click())
+		}, [ _('Import') ]),
+		fileInput
+	]);
+}
 
 function getConnStat(o, site) {
 	const callConnStat = rpc.declare({
-		object: 'luci.homeproxy',
+		object: 'luci.homeproxyce',
 		method: 'connection_check',
 		params: ['site'],
 		expect: { '': {} }
@@ -62,14 +196,14 @@ function getConnStat(o, site) {
 
 function getResVersion(o, type) {
 	const callResVersion = rpc.declare({
-		object: 'luci.homeproxy',
+		object: 'luci.homeproxyce',
 		method: 'resources_get_version',
 		params: ['type'],
 		expect: { '': {} }
 	});
 
 	const callResUpdate = rpc.declare({
-		object: 'luci.homeproxy',
+		object: 'luci.homeproxyce',
 		method: 'resources_update',
 		params: ['type'],
 		expect: { '': {} }
@@ -130,7 +264,7 @@ function getRuntimeLog(o, name, _option_index, section_id, _in_table) {
 	}
 
 	if (section) {
-		const selected = uci.get('homeproxy', section, 'log_level') || 'warn';
+		const selected = uci.get('homeproxy-ce', section, 'log_level') || 'warn';
 		const choices = {
 			trace: _('Trace'),
 			debug: _('Debug'),
@@ -146,7 +280,7 @@ function getRuntimeLog(o, name, _option_index, section_id, _in_table) {
 			'class': 'cbi-input-select',
 			'style': 'margin-left: 4px; width: 6em;',
 			'change': ui.createHandlerFn(this, (ev) => {
-				uci.set('homeproxy', section, 'log_level', ev.target.value);
+				uci.set('homeproxy-ce', section, 'log_level', ev.target.value);
 				return o.map.save(null, true).then(() => {
 					ui.changes.apply(true);
 				});
@@ -162,7 +296,7 @@ function getRuntimeLog(o, name, _option_index, section_id, _in_table) {
 	}
 
 	const callLogClean = rpc.declare({
-		object: 'luci.homeproxy',
+		object: 'luci.homeproxyce',
 		method: 'log_clean',
 		params: ['type'],
 		expect: { '': {} }
@@ -227,7 +361,31 @@ return view.extend({
 	render() {
 		let m, s, o;
 
-		m = new form.Map('homeproxy');
+		m = new form.Map('homeproxy-ce');
+
+		s = m.section(form.TypedSection);
+		s.render = function() {
+			poll.add(() => {
+				return L.resolveDefault(getServiceStatus()).then((res) => {
+					let view = document.getElementById('service_status');
+					if (view)
+						view.innerHTML = renderServiceStatus(res);
+				});
+			});
+
+			return E('div', { class: 'cbi-section', id: 'status_bar' }, [
+				E('p', { id: 'service_status' }, _('Collecting data...'))
+			]);
+		};
+
+		s = m.section(form.NamedSection, 'config', 'homeproxy', _('Service control'));
+		s.anonymous = true;
+
+		o = s.option(form.DummyValue, '_service_control', _('Service actions'));
+		o.cfgvalue = L.bind(renderServiceControl, this, o);
+
+		o = s.option(form.DummyValue, '_config_actions', _('Configuration'));
+		o.cfgvalue = L.bind(renderConfigActions, this, o);
 
 		s = m.section(form.NamedSection, 'config', 'homeproxy', _('Connection check'));
 		s.anonymous = true;

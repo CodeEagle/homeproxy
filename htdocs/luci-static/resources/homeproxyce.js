@@ -177,7 +177,7 @@ return baseclass.extend({
 
 	getBuiltinFeatures() {
 		const callGetSingBoxFeatures = rpc.declare({
-			object: 'luci.homeproxy',
+			object: 'luci.homeproxyce',
 			method: 'singbox_get_features',
 			expect: { '': {} }
 		});
@@ -246,7 +246,7 @@ return baseclass.extend({
 
 	uploadCertificate(_option, type, filename, ev) {
 		const callWriteCertificate = rpc.declare({
-			object: 'luci.homeproxy',
+			object: 'luci.homeproxyce',
 			method: 'certificate_write',
 			params: ['filename'],
 			expect: { '': {} }
@@ -276,7 +276,7 @@ return baseclass.extend({
 	validateCertificatePath(section_id, value) {
 		if (section_id && value)
 			if (!value.match(/^(\/etc\/homeproxy\/certs\/|\/etc\/acme\/|\/etc\/ssl\/).+$/))
-				return _('Expecting: %s').format(_('/etc/homeproxy/certs/..., /etc/acme/..., /etc/ssl/...'));
+				return _('Expecting: %s').format(_('/etc/homeproxy-ce/certs/..., /etc/acme/..., /etc/ssl/...'));
 
 		return true;
 	},

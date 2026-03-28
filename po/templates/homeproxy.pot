@@ -10,7 +10,7 @@ msgid "%s nodes removed"
 msgstr ""
 
 #: htdocs/luci-static/resources/homeproxy.js:279
-msgid "/etc/homeproxy/certs/..., /etc/acme/..., /etc/ssl/..."
+msgid "/etc/homeproxy-ce/certs/..., /etc/acme/..., /etc/ssl/..."
 msgstr ""
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js:609

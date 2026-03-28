@@ -12,7 +12,7 @@ import { isEmpty, parseURL } from 'homeproxy';
 
 const uci = cursor();
 
-const uciconfig = 'homeproxy';
+const uciconfig = 'homeproxy-ce';
 uci.load(uciconfig);
 
 const uciinfra = 'infra',
@@ -79,9 +79,9 @@ if (isEmpty(uci.get(uciconfig, uciserver, 'log_level')))
 if (uci.get(uciconfig, ucimain, 'routing_port') === 'all')
 	uci.delete(uciconfig, ucimain, 'routing_port');
 
-/* experimental section was removed */
-if (uci.get(uciconfig, 'experimental'))
-	uci.delete(uciconfig, 'experimental');
+/* keep experimental section for homeproxy-ce extensions */
+if (!uci.get(uciconfig, 'experimental'))
+	uci.set(uciconfig, 'experimental', 'homeproxy');
 
 /* block-dns was removed from built-in dns servers */
 const default_dns_server = uci.get(uciconfig, ucidns, 'default_server');

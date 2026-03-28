@@ -18,8 +18,20 @@ function hasKernelModule(kmod) {
 	return (system(sprintf('[ -e "/lib/modules/$(uname -r)"/%s ]', shellquote(kmod))) === 0);
 }
 
-const HP_DIR = '/etc/homeproxy';
-const RUN_DIR = '/var/run/homeproxy';
+function readCommand(cmd) {
+	let output = '';
+	const fd = popen(cmd);
+	if (fd) {
+		for (let line = fd.read('line'); length(line); line = fd.read('line'))
+			output += trim(line);
+		fd.close();
+	}
+
+	return output;
+}
+
+const HP_DIR = '/etc/homeproxy-ce';
+const RUN_DIR = '/var/run/homeproxy-ce';
 
 const methods = {
 	acllist_read: {
@@ -60,7 +72,7 @@ const methods = {
 		args: { filename: 'filename' },
 		call: function(req) {
 			const writeCertificate = (filename, priv) => {
-				const tmpcert = '/tmp/homeproxy_certificate.tmp';
+				const tmpcert = '/tmp/homeproxy-ce_certificate.tmp';
 				const filestat = lstat(tmpcert);
 
 				if (!filestat || filestat.type !== 'file' || filestat.size <= 0) {
@@ -138,6 +150,90 @@ const methods = {
 			}
 
 			return { result: (system(`/usr/bin/wget --spider -qT3 ${url} 2>"/dev/null"`, 3100) === 0) };
+		}
+	},
+
+	service_action: {
+		args: { action: 'action' },
+		call: function(req) {
+			if (!(req.args?.action in ['start', 'stop', 'restart']))
+				return { result: false, error: 'illegal action' };
+
+			return {
+				result: (system(`/etc/init.d/homeproxy-ce ${shellquote(req.args?.action)}`) === 0)
+			};
+		}
+	},
+
+	config_export: {
+		call: function() {
+			const archive = '/tmp/homeproxy-ce-backup.tar.gz';
+			const cmd = "sh -c 'set -- etc/config/homeproxy-ce; " +
+				"[ -d /etc/homeproxy-ce/certs ] && set -- \"$@\" etc/homeproxy-ce/certs; " +
+				"[ -d /etc/homeproxy-ce/ruleset ] && set -- \"$@\" etc/homeproxy-ce/ruleset; " +
+				"[ -f /etc/homeproxy-ce/resources/direct_list.txt ] && set -- \"$@\" etc/homeproxy-ce/resources/direct_list.txt; " +
+				"[ -f /etc/homeproxy-ce/resources/proxy_list.txt ] && set -- \"$@\" etc/homeproxy-ce/resources/proxy_list.txt; " +
+				"tar -czf " + shellquote(archive) + " -C / \"$@\"'";
+
+			if (system(cmd) !== 0)
+				return { result: false, error: 'failed to create backup archive' };
+
+			return {
+				result: true,
+				filename: 'homeproxy-ce-backup.tar.gz',
+				content: readCommand("sh -c 'base64 " + shellquote(archive) + " | tr -d \"\\n\"'")
+			};
+		}
+	},
+
+	config_import: {
+		call: function() {
+			const archive = '/tmp/homeproxy-ce-backup.tar.gz';
+			if (!lstat(archive))
+				return { result: false, error: 'backup archive not found' };
+
+			const fd = popen('tar -tzf ' + shellquote(archive));
+			if (!fd)
+				return { result: false, error: 'failed to inspect backup archive' };
+
+			let valid = true;
+			for (let line = fd.read('line'); length(line); line = fd.read('line')) {
+				const path = trim(line);
+				if (path && !match(path, /^\.?\/?(etc\/config\/homeproxy-ce|etc\/homeproxy-ce(\/.*)?)$/)) {
+					valid = false;
+					break;
+				}
+			}
+			fd.close();
+
+			if (!valid)
+				return { result: false, error: 'backup archive contains unsupported paths' };
+
+			if (system('tar -xzf ' + shellquote(archive) + ' -C /') !== 0)
+				return { result: false, error: 'failed to extract backup archive' };
+
+			system('/usr/bin/ucode /etc/homeproxy-ce/scripts/migrate_config.uc');
+			system('/etc/init.d/homeproxy-ce restart');
+
+			return { result: true };
+		}
+	},
+
+	config_import_from_homeproxy: {
+		call: function() {
+			if (!lstat('/etc/config/homeproxy'))
+				return { result: false, error: 'existing /etc/config/homeproxy not found' };
+
+			system('mkdir -p /etc/homeproxy-ce/resources');
+			system('cp -fp /etc/config/homeproxy /etc/config/homeproxy-ce');
+			system('[ ! -d /etc/homeproxy/certs ] || cp -fpR /etc/homeproxy/certs /etc/homeproxy-ce/');
+			system('[ ! -d /etc/homeproxy/ruleset ] || cp -fpR /etc/homeproxy/ruleset /etc/homeproxy-ce/');
+			system('[ ! -f /etc/homeproxy/resources/direct_list.txt ] || cp -fp /etc/homeproxy/resources/direct_list.txt /etc/homeproxy-ce/resources/');
+			system('[ ! -f /etc/homeproxy/resources/proxy_list.txt ] || cp -fp /etc/homeproxy/resources/proxy_list.txt /etc/homeproxy-ce/resources/');
+			system('/usr/bin/ucode /etc/homeproxy-ce/scripts/migrate_config.uc');
+			system('/etc/init.d/homeproxy-ce restart');
+
+			return { result: true };
 		}
 	},
 
@@ -251,4 +347,4 @@ const methods = {
 	}
 };
 
-return { 'luci.homeproxy': methods };
+return { 'luci.homeproxyce': methods };

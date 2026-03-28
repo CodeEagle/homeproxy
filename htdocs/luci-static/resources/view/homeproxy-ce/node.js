@@ -11,7 +11,7 @@
 'require ui';
 'require view';
 
-'require homeproxy as hp';
+'require homeproxyce as hp';
 'require tools.widgets as widgets';
 
 function allowInsecureConfirm(ev, _section_id, value) {
@@ -1076,7 +1076,7 @@ function renderNodeSettings(section, data, features, main_node, routing_mode) {
 
 	o = s.option(form.Value, 'tls_cert_path', _('Certificate path'),
 		_('The path to the server certificate, in PEM format.'));
-	o.value('/etc/homeproxy/certs/client_ca.pem');
+	o.value('/etc/homeproxy-ce/certs/client_ca.pem');
 	o.depends('tls_self_sign', '1');
 	o.validate = hp.validateCertificatePath;
 	o.rmempty = false;
@@ -1086,7 +1086,7 @@ function renderNodeSettings(section, data, features, main_node, routing_mode) {
 		_('<strong>Save your configuration before uploading files!</strong>'));
 	o.inputstyle = 'action';
 	o.inputtitle = _('Upload...');
-	o.depends({'tls_self_sign': '1', 'tls_cert_path': '/etc/homeproxy/certs/client_ca.pem'});
+	o.depends({'tls_self_sign': '1', 'tls_cert_path': '/etc/homeproxy-ce/certs/client_ca.pem'});
 	o.onclick = L.bind(hp.uploadCertificate, this, _('certificate'), 'client_ca');
 	o.modalonly = true;
 
@@ -1097,7 +1097,7 @@ function renderNodeSettings(section, data, features, main_node, routing_mode) {
 
 	o = s.option(form.Value, 'tls_ech_config_path', _('ECH config path'),
 		_('The path to the ECH config, in PEM format. If empty, load from DNS will be attempted.'));
-	o.value('/etc/homeproxy/certs/client_ech_conf.pem');
+	o.value('/etc/homeproxy-ce/certs/client_ech_conf.pem');
 	o.depends('tls_ech', '1');
 	o.modalonly = true;
 
@@ -1105,7 +1105,7 @@ function renderNodeSettings(section, data, features, main_node, routing_mode) {
 		_('<strong>Save your configuration before uploading files!</strong>'));
 	o.inputstyle = 'action';
 	o.inputtitle = _('Upload...');
-	o.depends({'tls_ech': '1', 'tls_ech_config_path': '/etc/homeproxy/certs/client_ech_conf.pem'});
+	o.depends({'tls_ech': '1', 'tls_ech_config_path': '/etc/homeproxy-ce/certs/client_ech_conf.pem'});
 	o.onclick = L.bind(hp.uploadCertificate, this, _('ECH config'), 'client_ech_conf');
 	o.modalonly = true;
 
@@ -1188,7 +1188,7 @@ function renderNodeSettings(section, data, features, main_node, routing_mode) {
 return view.extend({
 	load() {
 		return Promise.all([
-			uci.load('homeproxy'),
+			uci.load('homeproxy-ce'),
 			hp.getBuiltinFeatures()
 		]);
 	},
@@ -1208,7 +1208,7 @@ return view.extend({
 			subinfo.push({ 'hash': urlhash, 'title': title });
 		}
 
-		m = new form.Map('homeproxy', _('Edit nodes'));
+		m = new form.Map('homeproxy-ce', _('Edit nodes'));
 
 		s = m.section(form.NamedSection, 'subscription', 'homeproxy');
 

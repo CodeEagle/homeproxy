@@ -19,16 +19,17 @@ import {
 
 const ubus = connect();
 
-/* const features = ubus.call('luci.homeproxy', 'singbox_get_features') || {}; */
+/* const features = ubus.call('luci.homeproxyce', 'singbox_get_features') || {}; */
 
 /* UCI config start */
 const uci = cursor();
 
-const uciconfig = 'homeproxy';
+const uciconfig = 'homeproxy-ce';
 uci.load(uciconfig);
 
 const uciinfra = 'infra',
       ucimain = 'config',
+      uciexp = 'experimental',
       ucicontrol = 'control';
 
 const ucidnssetting = 'dns',
@@ -59,6 +60,14 @@ let main_node, main_udp_node, dedicated_udp_node, default_outbound, default_outb
     dns_default_server, dns_disable_cache, dns_disable_cache_expire, dns_independent_cache,
     dns_client_subnet, cache_file_store_rdrc, cache_file_rdrc_timeout, direct_domain_list,
     proxy_domain_list;
+
+const enable_clash_api = uci.get(uciconfig, uciexp, 'enable_clash_api'),
+      external_controller = uci.get(uciconfig, uciexp, 'external_controller'),
+      external_ui = uci.get(uciconfig, uciexp, 'external_ui'),
+      external_ui_download_url = uci.get(uciconfig, uciexp, 'external_ui_download_url'),
+      external_ui_download_detour = uci.get(uciconfig, uciexp, 'external_ui_download_detour'),
+      secret = uci.get(uciconfig, uciexp, 'secret'),
+      default_mode = uci.get(uciconfig, uciexp, 'default_mode');
 
 if (routing_mode !== 'custom') {
 	main_node = uci.get(uciconfig, ucimain, 'main_node') || 'nil';
@@ -359,11 +368,13 @@ function get_outbound(cfg) {
 		switch (cfg) {
 		case 'block-out':
 		case 'direct-out':
+		case 'main-out':
+		case 'main-udp-out':
 			return cfg;
 		default:
 			const node = uci.get(uciconfig, cfg, 'node');
 			if (isEmpty(node))
-				die(sprintf("%s's node is missing, please check your configuration.", cfg));
+				return null;
 			else if (node === 'urltest')
 				return 'cfg-' + cfg + '-out';
 			else
@@ -393,6 +404,35 @@ function get_ruleset(cfg) {
 	for (let i in cfg)
 		push(rules, isEmpty(i) ? null : 'cfg-' + i + '-rule');
 	return rules;
+}
+
+function has_outbound(outbound_tags, tag) {
+	return !!(tag && outbound_tags[tag]);
+}
+
+function normalize_outbound(outbound_tags, tag, fallback = 'direct-out') {
+	if (type(tag) === 'array')
+		return filter_outbounds(outbound_tags, tag, fallback);
+
+	if (has_outbound(outbound_tags, tag))
+		return tag;
+
+	return has_outbound(outbound_tags, fallback) ? fallback : null;
+}
+
+function filter_outbounds(outbound_tags, tags, fallback = 'direct-out') {
+	if (type(tags) !== 'array')
+		return normalize_outbound(outbound_tags, tags, fallback);
+
+	let filtered = [];
+	for (let tag in tags)
+		if (has_outbound(outbound_tags, tag) && !index(filtered, tag))
+			push(filtered, tag);
+
+	if (isEmpty(filtered) && has_outbound(outbound_tags, fallback))
+		push(filtered, fallback);
+
+	return isEmpty(filtered) ? null : filtered;
 }
 /* Config helper end */
 
@@ -785,6 +825,29 @@ if (!isEmpty(main_node)) {
 
 if (isEmpty(config.endpoints))
 	config.endpoints = null;
+
+let outbound_tags = {};
+for (let outbound in config.outbounds)
+	outbound_tags[outbound.tag] = true;
+for (let endpoint in config.endpoints || [])
+	outbound_tags[endpoint.tag] = true;
+
+for (let outbound in config.outbounds) {
+	if (outbound.type in ['selector', 'urltest'])
+		outbound.outbounds = filter_outbounds(outbound_tags, outbound.outbounds);
+
+	outbound.default = normalize_outbound(outbound_tags, outbound.default);
+	outbound.detour = normalize_outbound(outbound_tags, outbound.detour);
+}
+
+for (let endpoint in config.endpoints || [])
+	endpoint.detour = normalize_outbound(outbound_tags, endpoint.detour);
+
+for (let server in config.dns.servers)
+	server.detour = normalize_outbound(outbound_tags, server.detour);
+
+if (config.ntp)
+	config.ntp.detour = normalize_outbound(outbound_tags, config.ntp.detour);
 /* Outbound end */
 
 /* Routing rules start */
@@ -966,9 +1029,25 @@ if (routing_mode in ['bypass_mainland_china', 'custom']) {
 			path: RUN_DIR + '/cache.db',
 			store_rdrc: strToBool(cache_file_store_rdrc),
 			rdrc_timeout: strToTime(cache_file_rdrc_timeout),
+		},
+		clash_api: {
+			external_controller: (enable_clash_api === '1') ? external_controller : null,
+			external_ui: external_ui,
+			external_ui_download_url: external_ui_download_url,
+			external_ui_download_detour: normalize_outbound(outbound_tags, external_ui_download_detour),
+			secret: secret,
+			default_mode: default_mode
 		}
 	};
 }
+
+for (let rule in config.route.rules)
+	rule.outbound = normalize_outbound(outbound_tags, rule.outbound);
+
+for (let rule_set in config.route.rule_set || [])
+	rule_set.download_detour = normalize_outbound(outbound_tags, rule_set.download_detour);
+
+config.route.final = normalize_outbound(outbound_tags, config.route.final);
 /* Experimental end */
 
 system('mkdir -p ' + RUN_DIR);
