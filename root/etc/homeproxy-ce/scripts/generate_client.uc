@@ -18,8 +18,24 @@ import {
 } from 'homeproxy';
 
 const ubus = connect();
+const features = ubus.call('luci.homeproxyce', 'singbox_get_features', {}) || {};
 
-/* const features = ubus.call('luci.homeproxyce', 'singbox_get_features') || {}; */
+function version_lt(version, major, minor) {
+	if (isEmpty(version))
+		return false;
+
+	const matched = match(version, /^[0-9]+(\.[0-9]+)*/);
+	const parts = split(matched ? matched[0] : '', '.');
+	const cur_major = int(parts[0] || '0');
+	const cur_minor = int(parts[1] || '0');
+
+	if (cur_major !== int(major))
+		return cur_major < int(major);
+
+	return cur_minor < int(minor);
+}
+
+const legacy_dns_server_format = version_lt(features.version, 1, 12);
 
 /* UCI config start */
 const uci = cursor();
@@ -169,12 +185,40 @@ function parse_dnsserver(server_addr, default_protocol) {
 		server_addr = (default_protocol || 'udp') + '://' + (validation('ip6addr', server_addr) ? `[${server_addr}]` : server_addr);
 	server_addr = parseURL(server_addr);
 
+	if (legacy_dns_server_format)
+		return {
+			address: sprintf(
+				'%s://%s%s%s',
+				server_addr.protocol,
+				server_addr.hostname,
+				server_addr.port ? `:${server_addr.port}` : '',
+				(server_addr.pathname && server_addr.pathname !== '/') ? server_addr.pathname : ''
+			)
+		};
+
 	return {
 		type: server_addr.protocol,
 		server: server_addr.hostname,
 		server_port: strToInt(server_addr.port),
 		path: (server_addr.pathname !== '/') ? server_addr.pathname : null,
 	}
+}
+
+function apply_dns_resolver(server, resolver, strategy) {
+	if (!resolver && !strategy)
+		return server;
+
+	if (legacy_dns_server_format) {
+		server.address_resolver = resolver;
+		server.address_strategy = strategy;
+	} else {
+		server.domain_resolver = {
+			server: resolver,
+			strategy: strategy
+		};
+	}
+
+	return server;
 }
 
 function parse_dnsquery(strquery) {
@@ -463,15 +507,25 @@ if (!isEmpty(ntp_server))
 
 /* DNS start */
 /* Default settings */
+const wan_dns_server = parse_dnsserver(wan_dns);
+
 config.dns = {
 	servers: [
-		{
+		legacy_dns_server_format ? {
+			tag: 'default-dns',
+			address: wan_dns_server ? wan_dns_server.address : null,
+			detour: self_mark ? 'direct-out' : null
+		} : {
 			tag: 'default-dns',
 			type: 'udp',
 			server: wan_dns,
 			detour: self_mark ? 'direct-out' : null
 		},
-		{
+		legacy_dns_server_format ? {
+			tag: 'system-dns',
+			address: 'local',
+			detour: self_mark ? 'direct-out' : null
+		} : {
 			tag: 'system-dns',
 			type: 'local',
 			detour: self_mark ? 'direct-out' : null
@@ -489,13 +543,14 @@ if (!isEmpty(main_node)) {
 	/* Main DNS */
 	push(config.dns.servers, {
 		tag: 'main-dns',
-		domain_resolver: {
-			server: 'default-dns',
-			strategy: (ipv6_support !== '1') ? 'ipv4_only' : null
-		},
 		detour: 'main-out',
 		...parse_dnsserver(dns_server, 'tcp')
 	});
+	apply_dns_resolver(
+		config.dns.servers[length(config.dns.servers)-1],
+		'default-dns',
+		(ipv6_support !== '1') ? 'ipv4_only' : null
+	);
 	config.dns.final = 'main-dns';
 
 	if (length(direct_domain_list))
@@ -514,15 +569,16 @@ if (!isEmpty(main_node)) {
 		});
 
 	if (routing_mode === 'bypass_mainland_china') {
-		push(config.dns.servers, {
-			tag: 'china-dns',
-			domain_resolver: {
-				server: 'default-dns',
-				strategy: 'prefer_ipv6'
-			},
-			detour: self_mark ? 'direct-out' : null,
-			...parse_dnsserver(china_dns_server)
-		});
+			push(config.dns.servers, {
+				tag: 'china-dns',
+				detour: self_mark ? 'direct-out' : null,
+				...parse_dnsserver(china_dns_server)
+			});
+			apply_dns_resolver(
+				config.dns.servers[length(config.dns.servers)-1],
+				'default-dns',
+				'prefer_ipv6'
+			);
 
 		if (length(proxy_domain_list))
 			push(config.dns.rules, {
@@ -564,24 +620,39 @@ if (!isEmpty(main_node)) {
 		if (outbound === 'direct-out' && isEmpty(self_mark))
 			outbound = null;
 
-		push(config.dns.servers, {
-			tag: 'cfg-' + cfg['.name'] + '-dns',
-			type: cfg.type,
-			server: cfg.server,
-			server_port: strToInt(cfg.server_port),
-			path: cfg.path,
-			headers: cfg.headers,
-			tls: cfg.tls_sni ? {
-				enabled: true,
-				server_name: cfg.tls_sni
-			} : null,
-			domain_resolver: (cfg.address_resolver || cfg.address_strategy) ? {
-				server: get_resolver(cfg.address_resolver || dns_default_server),
-				strategy: cfg.address_strategy
-			} : null,
-			detour: outbound
+			let server = {
+				tag: 'cfg-' + cfg['.name'] + '-dns',
+				headers: cfg.headers,
+				tls: cfg.tls_sni ? {
+					enabled: true,
+					server_name: cfg.tls_sni
+				} : null,
+				detour: outbound
+			};
+
+			if (legacy_dns_server_format) {
+				server.address = sprintf(
+					'%s://%s%s%s',
+					cfg.type || 'udp',
+					cfg.server,
+					cfg.server_port ? `:${cfg.server_port}` : '',
+					(cfg.path && cfg.path !== '/') ? cfg.path : ''
+				);
+			} else {
+				server.type = cfg.type;
+				server.server = cfg.server;
+				server.server_port = strToInt(cfg.server_port);
+				server.path = cfg.path;
+			}
+
+			apply_dns_resolver(
+				server,
+				(cfg.address_resolver || cfg.address_strategy) ? get_resolver(cfg.address_resolver || dns_default_server) : null,
+				cfg.address_strategy
+			);
+
+			push(config.dns.servers, server);
 		});
-	});
 
 	/* DNS rules */
 	uci.foreach(uciconfig, ucidnsrule, (cfg) => {
