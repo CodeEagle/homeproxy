@@ -909,13 +909,16 @@ for (let outbound in config.outbounds)
 for (let endpoint in config.endpoints || [])
 	outbound_tags[endpoint.tag] = true;
 
-for (let outbound in config.outbounds) {
-	if (outbound.type in ['selector', 'urltest'])
-		outbound.outbounds = filter_outbounds(outbound_tags, outbound.outbounds);
+	for (let outbound in config.outbounds) {
+		if (outbound.type in ['selector', 'urltest'])
+			outbound.outbounds = filter_outbounds(outbound_tags, outbound.outbounds);
 
-	outbound.default = normalize_outbound(outbound_tags, outbound.default);
-	outbound.detour = normalize_outbound(outbound_tags, outbound.detour);
-}
+		if (legacy_dns_server_format)
+			delete outbound.default;
+		else
+			outbound.default = normalize_outbound(outbound_tags, outbound.default);
+		outbound.detour = normalize_outbound(outbound_tags, outbound.detour);
+	}
 
 for (let endpoint in config.endpoints || [])
 	endpoint.detour = normalize_outbound(outbound_tags, endpoint.detour);
