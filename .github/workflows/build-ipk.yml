@@ -107,8 +107,11 @@ jobs:
           pushd build-source/.github
           fakeroot bash build-ipk.sh ipk "${{ github.event_name }}"
           echo "IPK_ASSET_NAME=$(ls *.ipk)" >> $GITHUB_ENV
-          echo "RELEASE_TAG=homeproxy-ce-$(basename "$(ls *.ipk)" .ipk)" >> $GITHUB_ENV
-          echo "RELEASE_NAME=HomeProxy CE $(basename "$(ls *.ipk)" .ipk)" >> $GITHUB_ENV
+          PKG_BASENAME="$(basename "$(ls *.ipk)" .ipk)"
+          PKG_VERSION="$(printf '%s\n' "$PKG_BASENAME" | sed -E 's/^luci-app-homeproxy-ce_//; s/_all$//')"
+          RELEASE_TAG="homeproxy-ce-$(printf '%s\n' "$PKG_VERSION" | tr '~' '-')"
+          echo "RELEASE_TAG=$RELEASE_TAG" >> $GITHUB_ENV
+          echo "RELEASE_NAME=HomeProxy CE $PKG_VERSION" >> $GITHUB_ENV
           popd
 
       - name: Publishing IPK files to GitHub Artifacts
