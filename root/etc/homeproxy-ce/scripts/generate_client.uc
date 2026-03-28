@@ -410,7 +410,10 @@ function has_outbound(outbound_tags, tag) {
 	return !!(tag && outbound_tags[tag]);
 }
 
-function normalize_outbound(outbound_tags, tag, fallback = 'direct-out') {
+function normalize_outbound(outbound_tags, tag, fallback) {
+	if (fallback === null || fallback === '')
+		fallback = 'direct-out';
+
 	if (type(tag) === 'array')
 		return filter_outbounds(outbound_tags, tag, fallback);
 
@@ -420,7 +423,10 @@ function normalize_outbound(outbound_tags, tag, fallback = 'direct-out') {
 	return has_outbound(outbound_tags, fallback) ? fallback : null;
 }
 
-function filter_outbounds(outbound_tags, tags, fallback = 'direct-out') {
+function filter_outbounds(outbound_tags, tags, fallback) {
+	if (fallback === null || fallback === '')
+		fallback = 'direct-out';
+
 	if (type(tags) !== 'array')
 		return normalize_outbound(outbound_tags, tags, fallback);
 
