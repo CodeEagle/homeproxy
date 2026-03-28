@@ -7,7 +7,6 @@
 
 'use strict';
 
-import { md5 } from 'digest';
 import { open } from 'fs';
 import { connect } from 'ubus';
 import { cursor } from 'uci';
@@ -16,8 +15,8 @@ import { urldecode, urlencode } from 'luci.http';
 import { init_action } from 'luci.sys';
 
 import {
-	wGET, decodeBase64Str, getTime, isEmpty, parseURL,
-	validation, HP_DIR, RUN_DIR
+	wGET, decodeBase64Str, executeCommand, getTime, isEmpty, parseURL,
+	shellQuote, validation, HP_DIR, RUN_DIR
 } from 'homeproxy';
 
 /* UCI config start */
@@ -78,6 +77,12 @@ function log(...args) {
 	const logfile = open(`${RUN_DIR}/homeproxy.log`, 'a');
 	logfile.write(`${getTime()} [SUBSCRIBE] ${join(' ', args)}\n`);
 	logfile.close();
+}
+
+function md5hex(value) {
+	const cmd = `printf '%s' ${shellQuote(value)} | md5sum | cut -d' ' -f1`;
+	const output = executeCommand(`/bin/sh -c ${shellQuote(cmd)}`) || {};
+	return trim(output.stdout);
 }
 
 function parse_uri(uri) {
@@ -481,7 +486,7 @@ function main() {
 
 	for (let url in subscription_urls) {
 		url = replace(url, /#.*$/, '');
-		const groupHash = md5(url);
+		const groupHash = md5hex(url);
 		node_cache[groupHash] = {};
 
 		const res = wGET(url, user_agent);
@@ -513,8 +518,8 @@ function main() {
 			const hostname = validation('ip6addr', config.address) ? `[${config.address}]` : (config.address || 'unknown');
 			const label = `${config.label}[${hostname}].${count}`;
 			config.label = null;
-			const confHash = md5(sprintf('%J', config)),
-			      nameHash = md5(label);
+			const confHash = md5hex(sprintf('%J', config)),
+			      nameHash = md5hex(label);
 			config.label = label;
 
 			if (filter_check(config.label))
@@ -584,7 +589,7 @@ function main() {
 			if (node.isExisting)
 				return null;
 
-			const nameHash = md5(node.label);
+			const nameHash = md5hex(node.label);
 			uci.set(uciconfig, nameHash, 'node');
 			map(keys(node), (v) => uci.set(uciconfig, nameHash, v, node[v]));
 
