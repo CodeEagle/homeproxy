@@ -1,5 +1,8 @@
 name: Build ipk for HomeProxy
 
+permissions:
+  contents: write
+
 on:
   push:
     branches:
@@ -157,3 +160,23 @@ jobs:
           file: build-source/.github/luci-app-homeproxy-ce_*.*
           file_glob: true
           tag: ${{ github.ref }}
+
+      - name: Publish nightly release assets
+        uses: softprops/action-gh-release@v2
+        if: github.event_name != 'release'
+        with:
+          tag_name: homeproxy-ce-nightly
+          name: HomeProxy CE Nightly
+          body: |
+            Automated latest build of HomeProxy CE.
+
+            Source branch: ${{ github.ref_name }}
+            Patch head: ${{ github.sha }}
+            Upstream patched commit: ${{ env.PATCHED_COMMIT }}
+          prerelease: true
+          make_latest: false
+          generate_release_notes: false
+          files: |
+            build-source/.github/luci-app-homeproxy-ce_*.apk
+            build-source/.github/luci-app-homeproxy-ce_*.ipk
+          fail_on_unmatched_files: true
