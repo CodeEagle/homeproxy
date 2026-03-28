@@ -135,16 +135,15 @@ else
 [ "${IPKG_NO_SCRIPT}" = "1" ] && exit 0
 [ -s ${IPKG_INSTROOT}/lib/functions.sh ] || exit 0
 . ${IPKG_INSTROOT}/lib/functions.sh
-default_postinst $0 $@' > "$TEMP_PKG_DIR/CONTROL/postinst"
-	chmod 0755 "$TEMP_PKG_DIR/CONTROL/postinst"
-
-	echo -e "[ -n "\${IPKG_INSTROOT}" ] || {
+default_postinst "$0" "$@"
+[ -n "${IPKG_INSTROOT}" ] || {
 	(. /etc/uci-defaults/luci-homeproxy-ce) && rm -f /etc/uci-defaults/luci-homeproxy-ce
-	rm -f /tmp/luci-indexcache
+	rm -f /tmp/luci-indexcache*
 	rm -rf /tmp/luci-modulecache/
-	exit 0
-}" > "$TEMP_PKG_DIR/CONTROL/postinst-pkg"
-	chmod 0755 "$TEMP_PKG_DIR/CONTROL/postinst-pkg"
+	killall -HUP rpcd 2>/dev/null
+}
+exit 0' > "$TEMP_PKG_DIR/CONTROL/postinst"
+	chmod 0755 "$TEMP_PKG_DIR/CONTROL/postinst"
 
 	echo -e '#!/bin/sh
 [ -s ${IPKG_INSTROOT}/lib/functions.sh ] || exit 0
