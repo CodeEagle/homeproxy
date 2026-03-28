@@ -32,6 +32,11 @@ on:
     types:
       - published
 
+  workflow_dispatch:
+
+  schedule:
+    - cron: '23 3 * * *'
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -39,6 +44,28 @@ jobs:
     steps:
       - name: Checkout source tree
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Generate patch against upstream
+        run: |
+          git remote add upstream https://github.com/immortalwrt/homeproxy.git 2>/dev/null || true
+          git fetch upstream master
+
+          BASE_COMMIT="$(git merge-base HEAD upstream/master)"
+          git format-patch --stdout "${BASE_COMMIT}..HEAD" > /tmp/homeproxy-ce.patch
+
+          if [ ! -s /tmp/homeproxy-ce.patch ]; then
+            echo "Patch generation failed or produced an empty patch."
+            exit 1
+          fi
+
+      - name: Checkout latest upstream source tree
+        uses: actions/checkout@v6
+        with:
+          repository: 'immortalwrt/homeproxy'
+          ref: 'master'
+          path: 'build-source'
 
       - name: Checkout apk
         uses: actions/checkout@v6
@@ -54,6 +81,15 @@ jobs:
           repository: 'openwrt/luci'
           path: 'po2lmo'
           sparse-checkout: 'modules/luci-base/src'
+
+      - name: Apply HomeProxy CE patch to latest upstream
+        run: |
+          pushd build-source
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git am -3 /tmp/homeproxy-ce.patch
+          echo "PATCHED_COMMIT=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+          popd
 
       - name: Setup dependencies
         env:
@@ -90,7 +126,7 @@ jobs:
 
       - name: Build ipk file
         run: |
-          pushd .github
+          pushd build-source/.github
           fakeroot bash build-ipk.sh apk "${{ github.event_name }}"
           fakeroot bash build-ipk.sh ipk "${{ github.event_name }}"
           echo "APK_ASSET_NAME=$(ls *.apk)" >> $GITHUB_ENV
@@ -102,7 +138,7 @@ jobs:
         if: github.event_name != 'release'
         with:
           name: ${{ env.APK_ASSET_NAME }}
-          path: .github/${{ env.APK_ASSET_NAME }}
+          path: build-source/.github/${{ env.APK_ASSET_NAME }}
           archive: false
 
       - name: Publishing IPK files to GitHub Artifacts
@@ -110,7 +146,7 @@ jobs:
         if: github.event_name != 'release'
         with:
           name: ${{ env.IPK_ASSET_NAME }}
-          path: .github/${{ env.IPK_ASSET_NAME }}
+          path: build-source/.github/${{ env.IPK_ASSET_NAME }}
           archive: false
 
       - name: Publishing to GitHub Releases
@@ -118,6 +154,6 @@ jobs:
         if: github.event_name == 'release'
         with:
           repo_token: ${{ github.token }}
-          file: .github/luci-app-homeproxy-ce_*.*
+          file: build-source/.github/luci-app-homeproxy-ce_*.*
           file_glob: true
           tag: ${{ github.ref }}
