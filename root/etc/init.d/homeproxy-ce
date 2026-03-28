@@ -23,7 +23,12 @@ else
 	DNSMASQ_DIR="/tmp/dnsmasq.d/dnsmasq-homeproxy-ce.d"
 fi
 
+ensure_run_dir() {
+	mkdir -p "$RUN_DIR"
+}
+
 log() {
+	ensure_run_dir
 	echo -e "$(date "+%Y-%m-%d %H:%M:%S") [DAEMON] $*" >> "$LOG_PATH"
 }
 
@@ -48,7 +53,7 @@ start_service() {
 		return 1
 	fi
 
-	mkdir -p "$RUN_DIR"
+	ensure_run_dir
 
 	if [ "$outbound_node" != "nil" ]; then
 		# Generate/Validate client config
@@ -254,6 +259,8 @@ start_service() {
 }
 
 stop_service() {
+	ensure_run_dir
+
 	sed -i "/#${CONF}_autosetup/d" "/etc/crontabs/root" 2>"/dev/null"
 	/etc/init.d/cron restart >"/dev/null" 2>&1
 
