@@ -18,7 +18,7 @@ import {
 /* UCI config start */
 const uci = cursor();
 
-const uciconfig = 'homeproxy';
+const uciconfig = 'homeproxy-ce';
 uci.load(uciconfig);
 
 const uciserver = 'server';

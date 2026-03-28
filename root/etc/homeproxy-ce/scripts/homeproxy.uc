@@ -8,8 +8,8 @@ import { mkstemp } from 'fs';
 import { urldecode_params } from 'luci.http';
 
 /* Global variables start */
-export const HP_DIR = '/etc/homeproxy';
-export const RUN_DIR = '/var/run/homeproxy';
+export const HP_DIR = '/etc/homeproxy-ce';
+export const RUN_DIR = '/var/run/homeproxy-ce';
 /* Global variables end */
 
 /* Utilities start */

@@ -41,17 +41,17 @@ cp -fpR "$PKG_DIR/htdocs"/* "$TEMP_PKG_DIR/www/"
 cp -fpR "$PKG_DIR/root"/* "$TEMP_PKG_DIR/"
 
 cat > "$TEMP_PKG_DIR/lib/upgrade/keep.d/$PKG_NAME" <<-EOF
-/etc/homeproxy/certs/
-/etc/homeproxy/ruleset/
-/etc/homeproxy/resources/direct_list.txt
-/etc/homeproxy/resources/proxy_list.txt
+/etc/homeproxy-ce/certs/
+/etc/homeproxy-ce/ruleset/
+/etc/homeproxy-ce/resources/direct_list.txt
+/etc/homeproxy-ce/resources/proxy_list.txt
 EOF
 
-po2lmo "$PKG_DIR/po/zh_Hans/homeproxy.po" "$TEMP_PKG_DIR/usr/lib/lua/luci/i18n/homeproxy.zh-cn.lmo"
+po2lmo "$PKG_DIR/po/zh_Hans/homeproxy.po" "$TEMP_PKG_DIR/usr/lib/lua/luci/i18n/homeproxy-ce.zh-cn.lmo"
 
 if [ "$PKG_MGR" == "apk" ]; then
 	find "$TEMP_PKG_DIR" -type f,l -printf '/%P\n' | sort > "$TEMP_PKG_DIR/lib/apk/packages/$PKG_NAME.list"
-	echo "/etc/config/homeproxy" >> "$TEMP_PKG_DIR/lib/apk/packages/$PKG_NAME.conffiles"
+	echo "/etc/config/homeproxy-ce" >> "$TEMP_PKG_DIR/lib/apk/packages/$PKG_NAME.conffiles"
 	cat "$TEMP_PKG_DIR/lib/apk/packages/$PKG_NAME.conffiles" | while IFS= read -r file; do
 		[ -f "$TEMP_PKG_DIR/$file" ] || continue
 		sha256sum "$TEMP_PKG_DIR/$file" | sed "s,$TEMP_PKG_DIR/,," >> "$TEMP_PKG_DIR/lib/apk/packages/$PKG_NAME.conffiles_static"
@@ -129,7 +129,7 @@ else
 	EOF
 	chmod 0644 "$TEMP_PKG_DIR/CONTROL/control"
 
-	echo -e "/etc/config/homeproxy" > "$TEMP_PKG_DIR/CONTROL/conffiles"
+	echo -e "/etc/config/homeproxy-ce" > "$TEMP_PKG_DIR/CONTROL/conffiles"
 
 	echo -e '#!/bin/sh
 [ "${IPKG_NO_SCRIPT}" = "1" ] && exit 0
@@ -139,7 +139,7 @@ default_postinst $0 $@' > "$TEMP_PKG_DIR/CONTROL/postinst"
 	chmod 0755 "$TEMP_PKG_DIR/CONTROL/postinst"
 
 	echo -e "[ -n "\${IPKG_INSTROOT}" ] || {
-	(. /etc/uci-defaults/$PKG_NAME) && rm -f /etc/uci-defaults/$PKG_NAME
+	(. /etc/uci-defaults/luci-homeproxy-ce) && rm -f /etc/uci-defaults/luci-homeproxy-ce
 	rm -f /tmp/luci-indexcache
 	rm -rf /tmp/luci-modulecache/
 	exit 0

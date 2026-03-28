@@ -17,8 +17,65 @@ msgid "%s nodes removed"
 msgstr "移除了 %s 个节点"
 
 #: htdocs/luci-static/resources/homeproxy.js:279
-msgid "/etc/homeproxy/certs/..., /etc/acme/..., /etc/ssl/..."
-msgstr "/etc/homeproxy/certs/...，/etc/acme/...，/etc/ssl/..."
+msgid "/etc/homeproxy-ce/certs/..., /etc/acme/..., /etc/ssl/..."
+msgstr "/etc/homeproxy-ce/certs/...，/etc/acme/...，/etc/ssl/..."
+
+msgid "Clash API"
+msgstr "Clash API"
+
+msgid "Enable Clash API"
+msgstr "启用 Clash API"
+
+msgid "External Controller"
+msgstr "外部控制器"
+
+msgid "External UI Path"
+msgstr "外部 UI 路径"
+
+msgid "UI Download link"
+msgstr "UI 下载链接"
+
+msgid "UI Download detour"
+msgstr "UI 下载出口"
+
+msgid "Default mode"
+msgstr "默认模式"
+
+msgid "HomeProxy CE"
+msgstr "HomeProxy CE"
+
+msgid "Service control"
+msgstr "服务控制"
+
+msgid "Service actions"
+msgstr "服务操作"
+
+msgid "Configuration"
+msgstr "配置"
+
+msgid "Import from HomeProxy"
+msgstr "从 HomeProxy 导入"
+
+msgid "Export"
+msgstr "导出"
+
+msgid "Import"
+msgstr "导入"
+
+msgid "Successfully imported homeproxy-ce configuration."
+msgstr "已成功导入 homeproxy-ce 配置。"
+
+msgid "Failed to import homeproxy-ce configuration: %s"
+msgstr "导入 homeproxy-ce 配置失败：%s"
+
+msgid "Successfully imported configuration from HomeProxy."
+msgstr "已成功从 HomeProxy 导入配置。"
+
+msgid "Failed to import configuration from HomeProxy: %s"
+msgstr "从 HomeProxy 导入配置失败：%s"
+
+msgid "Failed to export homeproxy-ce configuration."
+msgstr "导出 homeproxy-ce 配置失败。"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js:609
 msgid "4 or 6. Not limited if empty."

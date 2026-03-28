@@ -13,6 +13,7 @@ import { connect } from 'ubus';
 import { cursor } from 'uci';
 
 import { urldecode, urlencode } from 'luci.http';
+import { init_action } from 'luci.sys';
 
 import {
 	wGET, decodeBase64Str, getTime, isEmpty, parseURL,
@@ -22,7 +23,7 @@ import {
 /* UCI config start */
 const uci = cursor();
 
-const uciconfig = 'homeproxy';
+const uciconfig = 'homeproxy-ce';
 uci.load(uciconfig);
 
 const ucimain = 'config',
@@ -68,7 +69,7 @@ const node_cache = {},
       node_result = [];
 
 const ubus = connect();
-const sing_features = ubus.call('luci.homeproxy', 'singbox_get_features', {}) || {};
+const sing_features = ubus.call('luci.homeproxyce', 'singbox_get_features', {}) || {};
 /* Common var end */
 
 /* Log */
@@ -479,7 +480,7 @@ function parse_uri(uri) {
 function main() {
 	if (via_proxy !== '1') {
 		log('Stopping service...');
-		service_action('stop');
+		init_action('homeproxy-ce', 'stop');
 	}
 
 	for (let url in subscription_urls) {
@@ -513,7 +514,8 @@ function main() {
 			if (isEmpty(config))
 				continue;
 
-			const label = config.label;
+			const hostname = validation('ip6addr', config.address) ? `[${config.address}]` : (config.address || 'unknown');
+			const label = `${config.label}[${hostname}].${count}`;
 			config.label = null;
 			const confHash = md5(sprintf('%J', config)),
 			      nameHash = md5(label);
@@ -550,7 +552,7 @@ function main() {
 
 		if (via_proxy !== '1') {
 			log('Starting service...');
-			service_action('start');
+			init_action('homeproxy-ce', 'start');
 		}
 
 		return false;
@@ -650,8 +652,8 @@ function main() {
 
 	if (need_restart) {
 		log('Restarting service...');
-		service_action('stop');
-		service_action('start');
+		init_action('homeproxy-ce', 'stop');
+		init_action('homeproxy-ce', 'start');
 	}
 
 	log(sprintf('%s nodes added, %s removed.', added, removed));
@@ -667,6 +669,6 @@ if (!isEmpty(subscription_urls))
 		log(e.stacktrace[0].context);
 
 		log('Restarting service...');
-		service_action('stop');
-		service_action('start');
+		init_action('homeproxy-ce', 'stop');
+		init_action('homeproxy-ce', 'start');
 	}

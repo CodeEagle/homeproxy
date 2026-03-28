@@ -1,0 +1,31 @@
+#!/bin/sh
+
+[ -f "/www/luci-static/resources/icons/loading.gif" ] && \
+	sed -i "s,/loading.svg,/loading.gif,g" "/www/luci-static/resources/view/homeproxy-ce/status.js"
+
+uci -q batch <<-EOF >"/dev/null"
+	delete firewall.homeproxy_ce_pre
+
+	delete firewall.homeproxy_ce_forward
+	set firewall.homeproxy_ce_forward=include
+	set firewall.homeproxy_ce_forward.type=nftables
+	set firewall.homeproxy_ce_forward.path="/var/run/homeproxy-ce/fw4_forward.nft"
+	set firewall.homeproxy_ce_forward.position="chain-pre"
+	set firewall.homeproxy_ce_forward.chain="forward"
+
+	delete firewall.homeproxy_ce_input
+	set firewall.homeproxy_ce_input=include
+	set firewall.homeproxy_ce_input.type=nftables
+	set firewall.homeproxy_ce_input.path="/var/run/homeproxy-ce/fw4_input.nft"
+	set firewall.homeproxy_ce_input.position="chain-pre"
+	set firewall.homeproxy_ce_input.chain="input"
+
+	delete firewall.homeproxy_ce_post
+	set firewall.homeproxy_ce_post=include
+	set firewall.homeproxy_ce_post.type=nftables
+	set firewall.homeproxy_ce_post.path="/var/run/homeproxy-ce/fw4_post.nft"
+	set firewall.homeproxy_ce_post.position="table-post"
+	commit firewall
+EOF
+
+exit 0

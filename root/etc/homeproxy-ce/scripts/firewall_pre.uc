@@ -6,7 +6,7 @@ import { writefile } from 'fs';
 import { cursor } from 'uci';
 import { isEmpty, RUN_DIR } from 'homeproxy';
 
-const cfgname = 'homeproxy';
+const cfgname = 'homeproxy-ce';
 const uci = cursor();
 uci.load(cfgname);
 

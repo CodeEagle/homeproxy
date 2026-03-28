@@ -12,7 +12,7 @@
 'require ui';
 'require view';
 
-'require homeproxy as hp';
+'require homeproxyce as hp';
 'require tools.widgets as widgets';
 
 const callServiceList = rpc.declare({
@@ -42,10 +42,10 @@ const CBIGenValue = form.Value.extend({
 });
 
 function getServiceStatus() {
-	return L.resolveDefault(callServiceList('homeproxy'), {}).then((res) => {
+	return L.resolveDefault(callServiceList('homeproxy-ce'), {}).then((res) => {
 		let isRunning = false;
 		try {
-			isRunning = res['homeproxy']['instances']['sing-box-s']['running'];
+			isRunning = res['homeproxy-ce']['instances']['sing-box-s']['running'];
 		} catch (e) { }
 		return isRunning;
 	});
@@ -70,7 +70,7 @@ function handleGenKey(option) {
 	}, this);
 
 	const callSingBoxGenerator = rpc.declare({
-		object: 'luci.homeproxy',
+		object: 'luci.homeproxyce',
 		method: 'singbox_generator',
 		params: ['type', 'params'],
 		expect: { '': {} }
@@ -117,7 +117,7 @@ function handleGenKey(option) {
 return view.extend({
 	load() {
 		return Promise.all([
-			uci.load('homeproxy'),
+			uci.load('homeproxy-ce'),
 			hp.getBuiltinFeatures()
 		]);
 	},
@@ -126,7 +126,7 @@ return view.extend({
 		let m, s, o;
 		let features = data[1];
 
-		m = new form.Map('homeproxy', _('HomeProxy Server'),
+		m = new form.Map('homeproxy-ce', _('HomeProxy Server'),
 			_('The modern ImmortalWrt proxy platform for ARM64/AMD64.'));
 
 		s = m.section(form.TypedSection);
@@ -755,7 +755,7 @@ return view.extend({
 
 		o = s.option(form.Value, 'tls_cert_path', _('Certificate path'),
 			_('The server public key, in PEM format.'));
-		o.value('/etc/homeproxy/certs/server_publickey.pem');
+		o.value('/etc/homeproxy-ce/certs/server_publickey.pem');
 		o.depends({'tls': '1', 'tls_acme': '0', 'tls_reality': null});
 		o.depends({'tls': '1', 'tls_acme': '0', 'tls_reality': '0'});
 		o.depends({'tls': '1', 'tls_acme': null, 'tls_reality': '0'});
@@ -768,13 +768,13 @@ return view.extend({
 			_('<strong>Save your configuration before uploading files!</strong>'));
 		o.inputstyle = 'action';
 		o.inputtitle = _('Upload...');
-		o.depends({'tls': '1', 'tls_cert_path': '/etc/homeproxy/certs/server_publickey.pem'});
+		o.depends({'tls': '1', 'tls_cert_path': '/etc/homeproxy-ce/certs/server_publickey.pem'});
 		o.onclick = L.bind(hp.uploadCertificate, this, _('certificate'), 'server_publickey');
 		o.modalonly = true;
 
 		o = s.option(form.Value, 'tls_key_path', _('Key path'),
 			_('The server private key, in PEM format.'));
-		o.value('/etc/homeproxy/certs/server_privatekey.pem');
+		o.value('/etc/homeproxy-ce/certs/server_privatekey.pem');
 		o.depends({'tls': '1', 'tls_acme': '0', 'tls_reality': '0'});
 		o.depends({'tls': '1', 'tls_acme': '0', 'tls_reality': null});
 		o.depends({'tls': '1', 'tls_acme': null, 'tls_reality': '0'});
@@ -787,7 +787,7 @@ return view.extend({
 			_('<strong>Save your configuration before uploading files!</strong>'));
 		o.inputstyle = 'action';
 		o.inputtitle = _('Upload...');
-		o.depends({'tls': '1', 'tls_key_path': '/etc/homeproxy/certs/server_privatekey.pem'});
+		o.depends({'tls': '1', 'tls_key_path': '/etc/homeproxy-ce/certs/server_privatekey.pem'});
 		o.onclick = L.bind(hp.uploadCertificate, this, _('private key'), 'server_privatekey');
 		o.modalonly = true;
 

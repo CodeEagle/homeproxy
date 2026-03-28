@@ -12,14 +12,15 @@ LUCI_DEPENDS:= \
 	+kmod-nft-tproxy \
 	+ucode-mod-digest
 
-PKG_NAME:=luci-app-homeproxy
+PKG_NAME:=luci-app-homeproxy-ce
+LUCI_PKG_CONFIG:=homeproxy-ce
 
-define Package/luci-app-homeproxy/conffiles
-/etc/config/homeproxy
-/etc/homeproxy/certs/
-/etc/homeproxy/ruleset/
-/etc/homeproxy/resources/direct_list.txt
-/etc/homeproxy/resources/proxy_list.txt
+define Package/luci-app-homeproxy-ce/conffiles
+/etc/config/homeproxy-ce
+/etc/homeproxy-ce/certs/
+/etc/homeproxy-ce/ruleset/
+/etc/homeproxy-ce/resources/direct_list.txt
+/etc/homeproxy-ce/resources/proxy_list.txt
 endef
 
 include $(TOPDIR)/feeds/luci/luci.mk
