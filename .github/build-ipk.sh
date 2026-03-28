@@ -137,7 +137,9 @@ else
 . ${IPKG_INSTROOT}/lib/functions.sh
 default_postinst "$0" "$@"
 [ -n "${IPKG_INSTROOT}" ] || {
-	(. /etc/uci-defaults/luci-homeproxy-ce) && rm -f /etc/uci-defaults/luci-homeproxy-ce
+	if [ -f /etc/uci-defaults/luci-homeproxy-ce ]; then
+		(. /etc/uci-defaults/luci-homeproxy-ce) && rm -f /etc/uci-defaults/luci-homeproxy-ce
+	fi
 	rm -f /tmp/luci-indexcache*
 	rm -rf /tmp/luci-modulecache/
 	killall -HUP rpcd 2>/dev/null
