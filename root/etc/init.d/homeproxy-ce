@@ -15,6 +15,8 @@ HP_DIR="/etc/homeproxy-ce"
 RUN_DIR="/var/run/homeproxy-ce"
 LOG_PATH="$RUN_DIR/homeproxy.log"
 
+export ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS=true
+
 # we don't know which is the default server, just take the first one
 DNSMASQ_UCI_CONFIG="$(uci -q show "dhcp.@dnsmasq[0]" | awk 'NR==1 {split($0, conf, /[.=]/); print conf[2]}')"
 if [ -f "/tmp/etc/dnsmasq.conf.$DNSMASQ_UCI_CONFIG" ]; then
@@ -154,8 +156,9 @@ start_service() {
 		procd_set_param command "$PROG"
 		procd_append_param command run --config "$RUN_DIR/sing-box-c.json"
 
+		procd_set_param env ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS=true
 		# QUIC-GO GSO is broken on kernel 6.6 currently
-		uname -r | grep -Eq "^6\.6" && procd_set_param env "QUIC_GO_DISABLE_GSO"="true"
+		uname -r | grep -Eq "^6\.6" && procd_append_param env "QUIC_GO_DISABLE_GSO"="true"
 
 		if [ -x "/sbin/ujail" ] && [ "$routing_mode" != "custom" ] && ! grep -Eq '"type": "(wireguard|tun)"' "$RUN_DIR/sing-box-c.json"; then
 			procd_add_jail "sing-box-c" log procfs
@@ -198,8 +201,9 @@ start_service() {
 		procd_set_param command "$PROG"
 		procd_append_param command run --config "$RUN_DIR/sing-box-s.json"
 
+		procd_set_param env ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS=true
 		# QUIC-GO GSO is broken on kernel 6.6 currently
-		uname -r | grep -Eq "^6\.6" && procd_set_param env "QUIC_GO_DISABLE_GSO"="true"
+		uname -r | grep -Eq "^6\.6" && procd_append_param env "QUIC_GO_DISABLE_GSO"="true"
 
 		if [ -x "/sbin/ujail" ]; then
 			procd_add_jail "sing-box-s" log procfs

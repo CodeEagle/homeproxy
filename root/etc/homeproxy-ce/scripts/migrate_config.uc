@@ -37,7 +37,7 @@ if (type(china_dns_server) === 'array') {
 	uci.set(uciconfig, ucimain, 'china_dns_server', china_dns_server[0]);
 } else {
 	if (china_dns_server === 'wan_114')
-		uci.set(uciconfig, ucimain, 'china_dns_server', '114.114.114.114');
+		uci.set(uciconfig, ucimain, 'china_dns_server', '223.5.5.5');
 	else if (match(china_dns_server, /,/))
 		uci.set(uciconfig, ucimain, 'china_dns_server', split(china_dns_server, ',')[0]);
 }

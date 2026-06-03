@@ -35,7 +35,9 @@ function version_lt(version, major, minor) {
 	return cur_minor < int(minor);
 }
 
-const legacy_dns_server_format = version_lt(features.version, 1, 12);
+const legacy_dns_server_format = version_lt(features.version, 1, 13);
+const legacy_dns_resolver_field = version_lt(features.version, 1, 13);
+const legacy_route_rule_format = version_lt(features.version, 1, 13);
 
 /* UCI config start */
 const uci = cursor();
@@ -208,7 +210,7 @@ function apply_dns_resolver(server, resolver, strategy) {
 	if (!resolver && !strategy)
 		return server;
 
-	if (legacy_dns_server_format) {
+	if (legacy_dns_server_format || legacy_dns_resolver_field) {
 		server.address_resolver = resolver;
 		server.address_strategy = strategy;
 	} else {
@@ -273,7 +275,7 @@ function generate_outbound(node) {
 	const outbound = {
 		type: node.type,
 		tag: 'cfg-' + node['.name'] + '-out',
-		routing_mark: strToInt(self_mark),
+		routing_mark: (node.type !== 'urltest' && node.type !== 'selector') ? strToInt(self_mark) : null,
 
 		server: node.address,
 		server_port: strToInt(node.port),
@@ -283,6 +285,15 @@ function generate_outbound(node) {
 		username: (node.type !== 'ssh') ? node.username : null,
 		user: (node.type === 'ssh') ? node.username : null,
 		password: node.password,
+
+		/* URLTest / Selector */
+		outbounds: node.outbounds,
+		url: node.url,
+		interval: node.interval,
+		tolerance: strToInt(node.tolerance),
+		idle_timeout: node.idle_timeout,
+		default: node.default,
+		interrupt_exist_connections: strToBool(node.interrupt_exist_connections),
 
 		/* Direct */
 		override_address: node.override_address,
@@ -416,9 +427,13 @@ function get_outbound(cfg) {
 		case 'main-udp-out':
 			return cfg;
 		default:
+			const direct_node = uci.get_all(uciconfig, cfg) || {};
+			if (direct_node['.type'] === ucinode)
+				return direct_node.label || cfg;
+
 			const node = uci.get(uciconfig, cfg, 'node');
 			if (isEmpty(node))
-				return null;
+				return cfg;
 			else if (node === 'urltest')
 				return 'cfg-' + cfg + '-out';
 			else
@@ -434,9 +449,20 @@ function get_resolver(cfg) {
 	switch (cfg) {
 	case 'default-dns':
 	case 'system-dns':
+	case 'block-dns':
 		return cfg;
 	default:
-		return 'cfg-' + cfg + '-dns';
+		const dns_server = uci.get_all(uciconfig, cfg) || {};
+		if (dns_server['.type'] === ucidnsserver)
+			return 'cfg-' + (dns_server.label || cfg) + '-dns';
+
+		let label_tag = null;
+		uci.foreach(uciconfig, ucidnsserver, (server) => {
+			if (server.label === cfg)
+				label_tag = 'cfg-' + cfg + '-dns';
+		});
+
+		return label_tag || 'cfg-' + cfg + '-dns';
 	}
 }
 
@@ -467,6 +493,21 @@ function normalize_outbound(outbound_tags, tag, fallback) {
 	return has_outbound(outbound_tags, fallback) ? fallback : null;
 }
 
+function normalize_optional_outbound(outbound_tags, tag) {
+	if (isEmpty(tag))
+		return null;
+
+	if (type(tag) === 'array') {
+		let filtered = [];
+		for (let item in tag)
+			if (has_outbound(outbound_tags, item) && !~index(filtered, item))
+				push(filtered, item);
+		return isEmpty(filtered) ? null : filtered;
+	}
+
+	return has_outbound(outbound_tags, tag) ? tag : null;
+}
+
 function filter_outbounds(outbound_tags, tags, fallback) {
 	if (fallback === null || fallback === '')
 		fallback = 'direct-out';
@@ -476,7 +517,7 @@ function filter_outbounds(outbound_tags, tags, fallback) {
 
 	let filtered = [];
 	for (let tag in tags)
-		if (has_outbound(outbound_tags, tag) && !index(filtered, tag))
+		if (has_outbound(outbound_tags, tag) && !~index(filtered, tag))
 			push(filtered, tag);
 
 	if (isEmpty(filtered) && has_outbound(outbound_tags, fallback))
@@ -529,6 +570,14 @@ config.dns = {
 			tag: 'system-dns',
 			type: 'local',
 			detour: self_mark ? 'direct-out' : null
+		},
+		legacy_dns_server_format ? {
+			tag: 'block-dns',
+			address: 'rcode://name_error'
+		} : {
+			tag: 'block-dns',
+			type: 'rcode',
+			rcode: 'name_error'
 		}
 	],
 	rules: [],
@@ -621,7 +670,7 @@ if (!isEmpty(main_node)) {
 			outbound = null;
 
 			let server = {
-				tag: 'cfg-' + cfg['.name'] + '-dns',
+				tag: 'cfg-' + (cfg.label || cfg['.name']) + '-dns',
 				headers: cfg.headers,
 				tls: cfg.tls_sni ? {
 					enabled: true,
@@ -630,7 +679,12 @@ if (!isEmpty(main_node)) {
 				detour: outbound
 			};
 
-			if (legacy_dns_server_format) {
+			if (cfg.address) {
+				server = {
+					...server,
+					...(parse_dnsserver(cfg.address, cfg.type || 'udp') || {})
+				};
+			} else if (legacy_dns_server_format) {
 				server.address = sprintf(
 					'%s://%s%s%s',
 					cfg.type || 'udp',
@@ -680,6 +734,7 @@ if (!isEmpty(main_node)) {
 			process_path: cfg.process_path,
 			process_path_regex: cfg.process_path_regex,
 			user: cfg.user,
+			clash_mode: cfg.clash_mode,
 			rule_set: get_ruleset(cfg.rule_set),
 			rule_set_ip_cidr_match_source: strToBool(cfg.rule_set_ip_cidr_match_source),
 			rule_set_ip_cidr_accept_empty: strToBool(cfg.rule_set_ip_cidr_accept_empty),
@@ -782,8 +837,15 @@ config.outbounds = [
 		tag: 'block-out'
 	}
 ];
+if (legacy_route_rule_format)
+	push(config.outbounds, {
+		type: 'dns',
+		tag: 'dns-out'
+	});
 
 /* Main outbounds */
+let legacy_all_node_outbounds = false;
+
 if (!isEmpty(main_node)) {
 	let urltest_nodes = [];
 
@@ -849,11 +911,14 @@ if (!isEmpty(main_node)) {
 	}
 } else if (!isEmpty(default_outbound)) {
 	let urltest_nodes = [],
-	    routing_nodes = [];
+	    routing_nodes = [],
+	    has_routing_nodes = false;
 
 	uci.foreach(uciconfig, uciroutingnode, (cfg) => {
 		if (cfg.enabled !== '1')
 			return;
+
+		has_routing_nodes = true;
 
 		if (cfg.node === 'urltest') {
 			push(config.outbounds, {
@@ -892,12 +957,32 @@ if (!isEmpty(main_node)) {
 		}
 	});
 
-	for (let i in filter(urltest_nodes, (l) => !~index(routing_nodes, l))) {
-		const urltest_node = uci.get_all(uciconfig, i) || {};
-		if (urltest_node.type === 'wireguard')
-			push(config.endpoints, generate_endpoint(urltest_node));
-		else
-			push(config.outbounds, generate_outbound(urltest_node));
+	if (has_routing_nodes) {
+		for (let i in filter(urltest_nodes, (l) => !~index(routing_nodes, l))) {
+			const urltest_node = uci.get_all(uciconfig, i) || {};
+			if (urltest_node.type === 'wireguard')
+				push(config.endpoints, generate_endpoint(urltest_node));
+			else
+				push(config.outbounds, generate_outbound(urltest_node));
+		}
+	} else {
+		legacy_all_node_outbounds = true;
+
+		uci.foreach(uciconfig, ucinode, (cfg) => {
+			if (cfg.type === 'wireguard') {
+				push(config.endpoints, generate_endpoint(cfg));
+				config.endpoints[length(config.endpoints)-1].tag = cfg.label || config.endpoints[length(config.endpoints)-1].tag;
+				config.endpoints[length(config.endpoints)-1].domain_strategy = cfg.domain_strategy;
+				config.endpoints[length(config.endpoints)-1].bind_interface = cfg.bind_interface;
+				config.endpoints[length(config.endpoints)-1].detour = cfg.outbound;
+			} else {
+				push(config.outbounds, generate_outbound(cfg));
+				config.outbounds[length(config.outbounds)-1].tag = cfg.label || config.outbounds[length(config.outbounds)-1].tag;
+				config.outbounds[length(config.outbounds)-1].domain_strategy = cfg.domain_strategy;
+				config.outbounds[length(config.outbounds)-1].bind_interface = cfg.bind_interface;
+				config.outbounds[length(config.outbounds)-1].detour = cfg.outbound;
+			}
+		});
 	}
 }
 
@@ -911,30 +996,42 @@ for (let endpoint in config.endpoints || [])
 	outbound_tags[endpoint.tag] = true;
 
 	for (let outbound in config.outbounds) {
-		if (outbound.type in ['selector', 'urltest'])
+		if ((outbound.type in ['selector', 'urltest']) && !legacy_all_node_outbounds)
 			outbound.outbounds = filter_outbounds(outbound_tags, outbound.outbounds);
 
-		if (legacy_dns_server_format)
-			delete outbound.default;
-		else
-			outbound.default = normalize_outbound(outbound_tags, outbound.default);
-		outbound.detour = normalize_outbound(outbound_tags, outbound.detour);
+		if (legacy_dns_server_format) {
+			if (outbound.type in ['selector', 'urltest'])
+				outbound.default = normalize_optional_outbound(outbound_tags, outbound.default);
+			else
+				delete outbound.default;
+		} else
+			outbound.default = normalize_optional_outbound(outbound_tags, outbound.default);
+		outbound.detour = normalize_optional_outbound(outbound_tags, outbound.detour);
 	}
 
 for (let endpoint in config.endpoints || [])
-	endpoint.detour = normalize_outbound(outbound_tags, endpoint.detour);
+	endpoint.detour = normalize_optional_outbound(outbound_tags, endpoint.detour);
 
 for (let server in config.dns.servers)
-	server.detour = normalize_outbound(outbound_tags, server.detour);
+	server.detour = normalize_optional_outbound(outbound_tags, server.detour);
 
 if (config.ntp)
-	config.ntp.detour = normalize_outbound(outbound_tags, config.ntp.detour);
+	config.ntp.detour = normalize_optional_outbound(outbound_tags, config.ntp.detour);
 /* Outbound end */
 
 /* Routing rules start */
 /* Default settings */
 config.route = {
-	rules: [
+	rules: legacy_route_rule_format ? [
+		{
+			inbound: 'dns-in',
+			outbound: 'dns-out'
+		},
+		{
+			protocol: 'dns',
+			outbound: 'dns-out'
+		}
+	] : [
 		{
 			inbound: 'dns-in',
 			action: 'hijack-dns'
@@ -1065,6 +1162,7 @@ if (!isEmpty(main_node)) {
 			process_path: cfg.process_path,
 			process_path_regex: cfg.process_path_regex,
 			user: cfg.user,
+			clash_mode: cfg.clash_mode,
 			rule_set: get_ruleset(cfg.rule_set),
 			rule_set_ip_cidr_match_source: strToBool(cfg.rule_set_ip_cidr_match_source),
 			invert: strToBool(cfg.invert),
@@ -1122,10 +1220,30 @@ if (routing_mode in ['bypass_mainland_china', 'custom']) {
 }
 
 for (let rule in config.route.rules)
-	rule.outbound = normalize_outbound(outbound_tags, rule.outbound);
+	rule.outbound = normalize_optional_outbound(outbound_tags, rule.outbound);
+
+if (legacy_route_rule_format)
+	for (let rule in config.route.rules) {
+		switch (rule.action) {
+		case 'hijack-dns':
+			rule.outbound = 'dns-out';
+			delete rule.action;
+			break;
+		case 'route':
+		case 'route-options':
+			delete rule.action;
+			break;
+		case 'reject':
+			rule.outbound = 'block-out';
+			delete rule.action;
+			delete rule.method;
+			delete rule.no_drop;
+			break;
+		}
+	}
 
 for (let rule_set in config.route.rule_set || [])
-	rule_set.download_detour = normalize_outbound(outbound_tags, rule_set.download_detour);
+	rule_set.download_detour = normalize_outbound(outbound_tags, rule_set.download_detour, config.route.final);
 
 config.route.final = normalize_outbound(outbound_tags, config.route.final);
 /* Experimental end */
