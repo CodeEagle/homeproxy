@@ -57,6 +57,11 @@ config homeproxy 'routing'
 	option default_outbound 'nil'
 	option default_outbound_dns 'default-dns'
 
+config homeproxy 'tailscale'
+	option enabled '0'
+	option hostname ''
+	list advertise_routes '192.168.6.0/24'
+
 config homeproxy 'dns'
 	option dns_strategy 'prefer_ipv4'
 	option default_server 'local-dns'

@@ -11,6 +11,9 @@ every node type or optional server feature works on every intermediate core.
 - From 1.13, use route `sniff` actions scoped to the proxy inbounds. The DNS
   inbound is excluded. The removed `sniff_override_destination` option has no
   exact equivalent in the new action; it remains effective only on old cores.
+- From 1.14, move remote rule-set download routing from `download_detour`
+  to `http_client.detour`, preserving the selected outbound. The tested 1.15
+  core rejects the old field during startup even when `sing-box check` passes.
 - Do not generate the invalid modern `rcode` DNS transport. DNS rules using
   the built-in `block-dns` server become `predefined` / `NXDOMAIN` rules.
   Using `block-dns` as a default or outbound resolver requires an explicit
@@ -49,6 +52,10 @@ outbounds, DNS match conditions and routing decisions. Only the dynamically
 discovered WAN DNS address is normalized when comparing with an older running
 snapshot. Real configuration remains on the router; only counts and comparison
 results are printed. Remove the temporary directory when finished.
+
+Also validate actual startup and DNS, TCP and UDP traffic on isolated ports
+before replacing a running core. Configuration checks alone do not exercise
+all startup-time compatibility checks.
 
 ## Upstream references
 

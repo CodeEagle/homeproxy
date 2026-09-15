@@ -17,6 +17,7 @@ LUCI_PKG_CONFIG:=homeproxy-ce
 define Package/luci-app-homeproxy-ce/conffiles
 /etc/config/homeproxy-ce
 /etc/homeproxy-ce/certs/
+/etc/homeproxy-ce/tailscale/
 /etc/homeproxy-ce/ruleset/
 /etc/homeproxy-ce/resources/direct_list.txt
 /etc/homeproxy-ce/resources/proxy_list.txt

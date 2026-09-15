@@ -14,6 +14,7 @@ PROG="/usr/bin/sing-box"
 HP_DIR="/etc/homeproxy-ce"
 RUN_DIR="/var/run/homeproxy-ce"
 LOG_PATH="$RUN_DIR/homeproxy.log"
+TAILSCALE_STATE_DIR="$HP_DIR/tailscale"
 
 export ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS=true
 # Preserve UCI DNS rules that match outbound/any selectors until they can be
@@ -32,6 +33,12 @@ ensure_run_dir() {
 	mkdir -p "$RUN_DIR"
 }
 
+ensure_tailscale_state_dir() {
+	mkdir -p "$TAILSCALE_STATE_DIR" || return 1
+	chown root:root "$TAILSCALE_STATE_DIR" || return 1
+	chmod 700 "$TAILSCALE_STATE_DIR" || return 1
+}
+
 log() {
 	ensure_run_dir
 	echo -e "$(date "+%Y-%m-%d %H:%M:%S") [DAEMON] $*" >> "$LOG_PATH"
@@ -40,9 +47,15 @@ log() {
 start_service() {
 	config_load "$CONF"
 
-	local routing_mode proxy_mode
+	local routing_mode proxy_mode tailscale_enabled
 	config_get routing_mode "config" "routing_mode" "bypass_mainland_china"
 	config_get proxy_mode "config" "proxy_mode" "redirect_tproxy"
+	config_get_bool tailscale_enabled "tailscale" "enabled" "0"
+
+	if [ "$tailscale_enabled" = "1" ] && ! ensure_tailscale_state_dir; then
+		log "Error: failed to prepare Tailscale state directory."
+		return 1
+	fi
 
 	local outbound_node
 	if [ "$routing_mode" != "custom" ]; then
@@ -164,7 +177,7 @@ start_service() {
 		# QUIC-GO GSO is broken on kernel 6.6 currently
 		uname -r | grep -Eq "^6\.6" && procd_append_param env "QUIC_GO_DISABLE_GSO"="true"
 
-		if [ -x "/sbin/ujail" ] && [ "$routing_mode" != "custom" ] && ! grep -Eq '"type": "(wireguard|tun)"' "$RUN_DIR/sing-box-c.json"; then
+		if [ -x "/sbin/ujail" ] && [ "$routing_mode" != "custom" ] && ! grep -Eq '"type": "(wireguard|tun|tailscale)"' "$RUN_DIR/sing-box-c.json"; then
 			procd_add_jail "sing-box-c" log procfs
 			procd_add_jail_mount "$RUN_DIR/sing-box-c.json"
 			procd_add_jail_mount_rw "$RUN_DIR/sing-box-c.log"

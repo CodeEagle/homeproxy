@@ -39,6 +39,7 @@ const legacy_dns_server_format = version_lt(features.version, 1, 13);
 const legacy_dns_resolver_field = version_lt(features.version, 1, 13);
 const legacy_route_rule_format = version_lt(features.version, 1, 11);
 const legacy_inbound_sniff_fields = version_lt(features.version, 1, 13);
+const legacy_rule_set_download_detour = version_lt(features.version, 1, 14);
 
 /* UCI config start */
 const uci = cursor();
@@ -250,6 +251,69 @@ function add_modern_sniff_rules(rules, inbound_tags) {
 	return rules;
 }
 
+function validate_tailscale_cidr(route) {
+	if (type(route) !== 'string')
+		return false;
+
+	const matched = match(route, /^([^/]+)\/([0-9]+)$/);
+	if (!matched)
+		return false;
+
+	const prefix = int(matched[2]);
+	if (match(matched[1], /:/))
+		return prefix <= 128 && validation('ip6addr', matched[1]);
+
+	return prefix <= 32 && validation('ip4addr', matched[1]);
+}
+
+function generate_tailscale_endpoint(cfg, supported) {
+	if (!cfg || cfg.enabled !== '1')
+		return null;
+
+	if (!supported)
+		die('Tailscale is enabled but this sing-box build lacks with_tailscale support; ' +
+			'disable homeproxy-ce.tailscale.enabled or install a compatible build');
+
+	let advertise_routes = cfg.advertise_routes || [];
+	if (type(advertise_routes) !== 'array')
+		advertise_routes = [advertise_routes];
+	for (let i = 0; i < length(advertise_routes); i++) {
+		const route = advertise_routes[i];
+		if (!validate_tailscale_cidr(route))
+			die('invalid Tailscale advertise_routes CIDR: ' + route);
+	}
+
+	return {
+		type: 'tailscale',
+		tag: 'tailscale-ep',
+		state_directory: '/etc/homeproxy-ce/tailscale',
+		control_url: 'https://controlplane.tailscale.com',
+		ephemeral: false,
+		hostname: cfg.hostname || null,
+		accept_routes: false,
+		advertise_routes: advertise_routes,
+		advertise_exit_node: false,
+		detour: 'direct-out'
+	};
+}
+
+function add_tailscale_routes(rules, advertise_routes) {
+	if (type(advertise_routes) === 'array' && length(advertise_routes))
+		push(rules, {
+			inbound: 'tailscale-ep',
+			ip_cidr: advertise_routes,
+			action: 'route',
+			outbound: 'direct-out'
+		});
+
+	push(rules, {
+		inbound: 'tailscale-ep',
+		action: 'reject'
+	});
+
+	return rules;
+}
+
 function normalize_dns_rule_for_core(rule, legacy) {
 	if (!legacy && rule.server === 'block-dns') {
 		delete rule.server;
@@ -273,11 +337,41 @@ function normalize_dns_rule_for_core(rule, legacy) {
 	return rule;
 }
 
+function normalize_rule_set_download(rule_set, detour, modern) {
+	if (!rule_set)
+		return rule_set;
+
+	if (modern && rule_set.type !== 'remote') {
+		delete rule_set.download_detour;
+		delete rule_set.http_client;
+		return rule_set;
+	}
+
+	if (modern) {
+		delete rule_set.download_detour;
+		if (detour)
+			rule_set.http_client = { detour: detour };
+		else
+			delete rule_set.http_client;
+	} else {
+		delete rule_set.http_client;
+		if (detour)
+			rule_set.download_detour = detour;
+		else
+			delete rule_set.download_detour;
+	}
+
+	return rule_set;
+}
+
 function unsupported_dns_resolver_message(resolver, context) {
 	return 'sing-box 1.13+ cannot represent DNS resolver "' + resolver + '" in ' +
 		(context || 'this field') + ': block-dns was removed; use a DNS rule action ' +
 		'with predefined and rcode NXDOMAIN';
 }
+
+const tailscale_cfg = uci.get_all(uciconfig, 'tailscale') || {};
+const tailscale_endpoint = generate_tailscale_endpoint(tailscale_cfg, features.with_tailscale);
 
 function generate_endpoint(node) {
 	if (type(node) !== 'object' || isEmpty(node))
@@ -877,6 +971,9 @@ if (!legacy_inbound_sniff_fields)
 /* Outbound start */
 config.endpoints = [];
 
+if (tailscale_endpoint)
+	push(config.endpoints, tailscale_endpoint);
+
 /* Default outbounds */
 config.outbounds = [
 	{
@@ -1084,22 +1181,25 @@ if (config.ntp)
 /* Routing rules start */
 /* Default settings */
 config.route = {
-	rules: legacy_route_rule_format ? [
-		{
-			inbound: 'dns-in',
-			outbound: 'dns-out'
-		},
-		{
-			protocol: 'dns',
-			outbound: 'dns-out'
-		}
-	] : [],
+	rules: [],
 	rule_set: [],
 	auto_detect_interface: isEmpty(default_interface) ? true : null,
 	default_interface: default_interface
 };
 
-if (!legacy_route_rule_format) {
+if (tailscale_endpoint)
+	add_tailscale_routes(config.route.rules, tailscale_endpoint.advertise_routes);
+
+if (legacy_route_rule_format) {
+	push(config.route.rules, {
+		inbound: 'dns-in',
+		outbound: 'dns-out'
+	});
+	push(config.route.rules, {
+		protocol: 'dns',
+		outbound: 'dns-out'
+	});
+} else {
 	/*
 	 * Inbound sniff fields were removed in sing-box 1.13. The route sniff
 	 * action has no exact override_destination equivalent, so keep only the
@@ -1308,8 +1408,10 @@ if (legacy_route_rule_format)
 		}
 	}
 
-for (let rule_set in config.route.rule_set || [])
-	rule_set.download_detour = normalize_outbound(outbound_tags, rule_set.download_detour, config.route.final);
+for (let rule_set in config.route.rule_set || []) {
+	const download_detour = normalize_outbound(outbound_tags, rule_set.download_detour, config.route.final);
+	normalize_rule_set_download(rule_set, download_detour, !legacy_rule_set_download_detour);
+}
 
 config.route.final = normalize_outbound(outbound_tags, config.route.final);
 /* Experimental end */

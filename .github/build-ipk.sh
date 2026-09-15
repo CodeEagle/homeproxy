@@ -42,6 +42,7 @@ cp -fpR "$PKG_DIR/root"/* "$TEMP_PKG_DIR/"
 
 cat > "$TEMP_PKG_DIR/lib/upgrade/keep.d/$PKG_NAME" <<-EOF
 /etc/homeproxy-ce/certs/
+/etc/homeproxy-ce/tailscale/
 /etc/homeproxy-ce/ruleset/
 /etc/homeproxy-ce/resources/direct_list.txt
 /etc/homeproxy-ce/resources/proxy_list.txt
