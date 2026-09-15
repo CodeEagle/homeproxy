@@ -110,6 +110,18 @@ for (let i in control_options)
 const dns_redirect = uci.get(cfgname, 'infra', 'dns_redirect') || '1';
 const dns_hijacked = uci.get('dhcp', '@dnsmasq[0]', 'dns_redirect') || '0',
       dns_port = uci.get('dhcp', '@dnsmasq[0]', 'port') || '53';
+
+/* The generator is the single source of truth for the validated Tailscale
+ * listen port.  Read it back from the generated client config so legacy cores
+ * and disabled Tailscale do not acquire a synthetic firewall exception. */
+const tailscale_enabled = uci.get(cfgname, 'tailscale', 'enabled') || '0';
+let tailscale_listen_port = null;
+if (tailscale_enabled === '1') {
+	const client_config = json(readfile('/var/run/homeproxy-ce/sing-box-c.json') || '{}') || {};
+	for (let endpoint in client_config.endpoints || [])
+		if (!tailscale_listen_port && endpoint.type === 'tailscale' && endpoint.tag === 'tailscale-ep')
+			tailscale_listen_port = endpoint.listen_port;
+}
 /* UCI config end */
 -%}
 
@@ -495,6 +507,9 @@ chain homeproxy_ce_mangle_prerouting {
 }
 
 chain homeproxy_ce_mangle_output {
+	{% if (tailscale_listen_port): %}
+	udp sport {{ tailscale_listen_port }} counter return comment "!{{ cfgname }}: bypass Tailscale UDP"
+	{% endif %}
 	meta mark {{ self_mark }} counter return
 
 	ip daddr @homeproxy_ce_wan_proxy_addr_v4 counter goto homeproxy_ce_mangle_mark
@@ -660,6 +675,13 @@ chain mangle_prerouting {
 }
 
 chain mangle_output {
+	{% if (tailscale_listen_port): %}
+	meta nfproto { {{ (ipv6_support === '1') ? 'ipv4, ipv6' : 'ipv4' }} } meta l4proto udp udp sport != {{ tailscale_listen_port }} jump homeproxy_ce_mangle_tun
+	{% if (proxy_mode === 'tun'): %}
+	meta nfproto { {{ (ipv6_support === '1') ? 'ipv4, ipv6' : 'ipv4' }} } meta l4proto tcp jump homeproxy_ce_mangle_tun
+	{% endif %}
+	{% else %}
 	meta nfproto { {{ (ipv6_support === '1') ? 'ipv4, ipv6' : 'ipv4' }} } meta l4proto { {{ (proxy_mode === 'tun') ? 'tcp, udp' : 'udp' }} } jump homeproxy_ce_mangle_tun
+	{% endif %}
 }
 {% endif %}

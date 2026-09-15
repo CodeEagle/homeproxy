@@ -28,6 +28,11 @@ The endpoint stores its identity in `/etc/homeproxy-ce/tailscale` with mode
 `0700`. No auth key is stored. Sing-box logs an official Tailscale login URL
 at `info` level in `/var/run/homeproxy-ce/sing-box-c.log`; open that URL and
 approve the advertised subnet route separately in the Tailscale admin console.
+On sing-box 1.14 and newer, the endpoint listens on UDP port `41641` by
+default (`homeproxy-ce.tailscale.listen_port`). The value must be a numeric
+port from 1 through 65535. When Tailscale is enabled, CE exempts UDP packets
+from that source port before its own output transparent-proxy rules; this is
+needed for direct Tailscale transport.
 After login, restore the normal log level:
 
 ```sh

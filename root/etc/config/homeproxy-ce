@@ -60,6 +60,7 @@ config homeproxy 'routing'
 config homeproxy 'tailscale'
 	option enabled '0'
 	option hostname ''
+	option listen_port '41641'
 	list advertise_routes '192.168.6.0/24'
 
 config homeproxy 'dns'

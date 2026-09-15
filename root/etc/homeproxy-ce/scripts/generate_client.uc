@@ -40,6 +40,7 @@ const legacy_dns_resolver_field = version_lt(features.version, 1, 13);
 const legacy_route_rule_format = version_lt(features.version, 1, 11);
 const legacy_inbound_sniff_fields = version_lt(features.version, 1, 13);
 const legacy_rule_set_download_detour = version_lt(features.version, 1, 14);
+const legacy_tailscale_listen_port = version_lt(features.version, 1, 14);
 
 /* UCI config start */
 const uci = cursor();
@@ -266,13 +267,25 @@ function validate_tailscale_cidr(route) {
 	return prefix <= 32 && validation('ip4addr', matched[1]);
 }
 
-function generate_tailscale_endpoint(cfg, supported) {
+function validate_tailscale_port(port) {
+	if (type(port) !== 'string' || !match(port, /^[0-9]+$/))
+		return false;
+
+	const number = int(port);
+	return number >= 1 && number <= 65535 && validation('port', port);
+}
+
+function generate_tailscale_endpoint(cfg, supported, modern) {
 	if (!cfg || cfg.enabled !== '1')
 		return null;
 
 	if (!supported)
 		die('Tailscale is enabled but this sing-box build lacks with_tailscale support; ' +
 			'disable homeproxy-ce.tailscale.enabled or install a compatible build');
+
+	const listen_port = cfg.listen_port || '41641';
+	if (!validate_tailscale_port(listen_port))
+		die('invalid Tailscale listen_port: ' + listen_port);
 
 	let advertise_routes = cfg.advertise_routes || [];
 	if (type(advertise_routes) !== 'array')
@@ -283,7 +296,7 @@ function generate_tailscale_endpoint(cfg, supported) {
 			die('invalid Tailscale advertise_routes CIDR: ' + route);
 	}
 
-	return {
+	const endpoint = {
 		type: 'tailscale',
 		tag: 'tailscale-ep',
 		state_directory: '/etc/homeproxy-ce/tailscale',
@@ -295,6 +308,11 @@ function generate_tailscale_endpoint(cfg, supported) {
 		advertise_exit_node: false,
 		detour: 'direct-out'
 	};
+
+	if (modern)
+		endpoint.listen_port = int(listen_port);
+
+	return endpoint;
 }
 
 function add_tailscale_routes(rules, advertise_routes) {
@@ -371,7 +389,11 @@ function unsupported_dns_resolver_message(resolver, context) {
 }
 
 const tailscale_cfg = uci.get_all(uciconfig, 'tailscale') || {};
-const tailscale_endpoint = generate_tailscale_endpoint(tailscale_cfg, features.with_tailscale);
+const tailscale_endpoint = generate_tailscale_endpoint(
+	tailscale_cfg,
+	features.with_tailscale,
+	!legacy_tailscale_listen_port
+);
 
 function generate_endpoint(node) {
 	if (type(node) !== 'object' || isEmpty(node))
