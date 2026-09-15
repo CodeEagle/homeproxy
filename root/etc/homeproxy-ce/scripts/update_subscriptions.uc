@@ -275,7 +275,8 @@ function parse_uri(uri) {
 				password: urldecode(url.username),
 				transport: (params.type !== 'tcp') ? params.type : null,
 				tls: '1',
-				tls_sni: params.sni
+				tls_sni: params.sni || params.peer,
+				tls_insecure: ((params.insecure in ['true', '1']) || (params.allowInsecure in ['true', '1'])) ? '1' : '0'
 			};
 			switch(params.type) {
 			case 'grpc':

@@ -24,7 +24,7 @@ function version_lt(version, major, minor) {
 	if (isEmpty(version))
 		return false;
 
-	const matched = match(version, /^[0-9]+(\.[0-9]+)*/);
+	const matched = match(version, /^[0-9.]+/);
 	const parts = split(matched ? matched[0] : '', '.');
 	const cur_major = int(parts[0] || '0');
 	const cur_minor = int(parts[1] || '0');
@@ -37,7 +37,7 @@ function version_lt(version, major, minor) {
 
 const legacy_dns_server_format = version_lt(features.version, 1, 13);
 const legacy_dns_resolver_field = version_lt(features.version, 1, 13);
-const legacy_route_rule_format = version_lt(features.version, 1, 13);
+const legacy_route_rule_format = version_lt(features.version, 1, 11);
 
 /* UCI config start */
 const uci = cursor();
@@ -972,12 +972,22 @@ if (!isEmpty(main_node)) {
 			if (cfg.type === 'wireguard') {
 				push(config.endpoints, generate_endpoint(cfg));
 				config.endpoints[length(config.endpoints)-1].tag = cfg.label || config.endpoints[length(config.endpoints)-1].tag;
+				if (cfg.domain_resolver)
+					config.endpoints[length(config.endpoints)-1].domain_resolver = {
+						server: get_resolver(cfg.domain_resolver),
+						strategy: cfg.domain_strategy
+					};
 				config.endpoints[length(config.endpoints)-1].domain_strategy = cfg.domain_strategy;
 				config.endpoints[length(config.endpoints)-1].bind_interface = cfg.bind_interface;
 				config.endpoints[length(config.endpoints)-1].detour = cfg.outbound;
 			} else {
 				push(config.outbounds, generate_outbound(cfg));
 				config.outbounds[length(config.outbounds)-1].tag = cfg.label || config.outbounds[length(config.outbounds)-1].tag;
+				if (cfg.domain_resolver)
+					config.outbounds[length(config.outbounds)-1].domain_resolver = {
+						server: get_resolver(cfg.domain_resolver),
+						strategy: cfg.domain_strategy
+					};
 				config.outbounds[length(config.outbounds)-1].domain_strategy = cfg.domain_strategy;
 				config.outbounds[length(config.outbounds)-1].bind_interface = cfg.bind_interface;
 				config.outbounds[length(config.outbounds)-1].detour = cfg.outbound;

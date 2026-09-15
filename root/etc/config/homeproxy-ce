@@ -54,7 +54,7 @@ config homeproxy 'control'
 
 config homeproxy 'routing'
 	option sniff_override '1'
-	option default_outbound 'direct-out'
+	option default_outbound 'nil'
 	option default_outbound_dns 'default-dns'
 
 config homeproxy 'dns'
