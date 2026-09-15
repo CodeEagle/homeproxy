@@ -1,0 +1,7 @@
+# These chain-pre rules run before fw4 flow offload and enforce the same
+# source-IP/source-MAC pair check as the raw-prerouting table.
+iifname "br-lan" oifname "hpts0" ip saddr . ether saddr { 192.168.50.10 . 02:00:00:00:00:10, 192.168.50.11 . 02:00:00:00:00:11 } ip daddr 192.168.6.0/24 counter accept comment "homeproxy-tailscale: authorized devices"
+iifname "hpts0" oifname "br-lan" ip saddr 192.168.6.0/24 ip daddr { 192.168.50.10, 192.168.50.11 } counter accept comment "homeproxy-tailscale: return to authorized devices"
+oifname "hpts0" counter drop
+iifname "hpts0" counter drop
+ip daddr 192.168.6.0/24 counter drop

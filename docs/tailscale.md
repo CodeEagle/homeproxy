@@ -1,5 +1,20 @@
 # Tailscale subnet access
 
+## Two deployment roles
+
+The built-in CE integration below publishes a router's LAN to its tailnet.
+It is configured through UCI; this change does not add a LuCI Tailscale form.
+It requires a sing-box binary compiled with `with_tailscale`.
+
+For a second router that should let selected local devices access that remote
+LAN, see the [restricted client example](../contrib/tailscale-client/README.md).
+That example runs a separate sing-box instance alongside an existing HomeProxy
+installation. It accepts the remote subnet route, publishes no local subnet,
+and checks exact client IP/MAC pairs before forwarding traffic to a dedicated
+TUN. Ordinary HomeProxy configuration and its running core are preserved.
+
+## Publish a LAN from CE
+
 HomeProxy CE can run sing-box's userspace Tailscale endpoint. It is disabled
 by default. When enabled, the endpoint advertises the configured LAN prefixes,
 accepts no routes from other tailnet nodes, and sends only those advertised
@@ -44,3 +59,27 @@ uci commit homeproxy-ce
 The installed sing-box build must report the `with_tailscale` feature. If it
 does not, generation fails with an actionable error instead of silently
 starting without remote access.
+
+## Relay configuration and diagnosis
+
+Custom DERP relays are configured in the Tailscale control plane's `derpMap`.
+The official clients and the embedded endpoint receive that map from the same
+tailnet. There is no phone JSON import step, and `relay_server_port` describes
+peer relay service rather than a custom DERP map.
+
+Check actual DERP connectivity in addition to STUN latency. In the tested
+deployment, official STUN probes succeeded while the selected region's TCP
+443 connection timed out repeatedly. Custom nodes configured with
+`STUNPort: -1` were absent from STUN latency results. With successful STUN
+results elsewhere, the client's HTTPS fallback measurement did not run.
+Restricting that deployment to its verified custom DERP regions triggered
+HTTPS measurement and restored a working home relay.
+
+`OmitDefaultRegions: true` removes official DERP candidates from the whole
+tailnet. Use it only as an intentional deployment choice after verifying the
+custom relays. A working custom STUN service can allow latency measurement
+while retaining official regions. No third-party relay addresses or tailnet
+policy are installed by CE or the restricted client example.
+
+Sources: [DERP configuration](https://tailscale.com/docs/reference/derp-servers),
+[netcheck implementation](https://github.com/tailscale/tailscale/blob/main/net/netcheck/netcheck.go).

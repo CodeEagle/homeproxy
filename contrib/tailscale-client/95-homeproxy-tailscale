@@ -1,0 +1,7 @@
+#!/bin/sh
+
+# Reinstall the policy route when procd recreates hpts0 after a restart.
+[ "${INTERFACE:-}" = hpts0 ] || exit 0
+[ "${ACTION:-}" = add ] || exit 0
+[ -x /etc/homeproxy-tailscale/firewall.sh ] || exit 0
+/etc/homeproxy-tailscale/firewall.sh up >/dev/null 2>&1 &

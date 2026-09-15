@@ -1,0 +1,75 @@
+{
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "hpts-in",
+      "interface_name": "hpts0",
+      "address": [
+        "172.31.254.1/30"
+      ],
+      "mtu": 1280,
+      "auto_route": false,
+      "stack": "gvisor"
+    }
+  ],
+  "endpoints": [
+    {
+      "type": "tailscale",
+      "tag": "tailscale-ep",
+      "state_directory": "/mnt/data/homeproxy-tailscale/state",
+      "control_url": "https://controlplane.tailscale.com",
+      "ephemeral": false,
+      "hostname": "homeproxy-ts-client",
+      "accept_routes": true,
+      "advertise_routes": [],
+      "advertise_exit_node": false,
+      "listen_port": 41642,
+      "detour": "direct-out"
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct-out",
+      "routing_mark": 100
+    }
+  ],
+  "route": {
+    "rules": [
+      {
+        "inbound": [
+          "hpts-in"
+        ],
+        "source_ip_cidr": [
+          "192.168.50.10/32",
+          "192.168.50.11/32"
+        ],
+        "ip_cidr": [
+          "192.168.6.0/24"
+        ],
+        "action": "route",
+        "outbound": "tailscale-ep"
+      },
+      {
+        "inbound": [
+          "tailscale-ep"
+        ],
+        "action": "reject"
+      },
+      {
+        "inbound": [
+          "hpts-in"
+        ],
+        "action": "reject"
+      },
+      {
+        "action": "reject"
+      }
+    ],
+    "final": "direct-out"
+  }
+}
