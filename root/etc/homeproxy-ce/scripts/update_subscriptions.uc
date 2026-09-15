@@ -12,8 +12,6 @@ import { connect } from 'ubus';
 import { cursor } from 'uci';
 
 import { urldecode, urlencode } from 'luci.http';
-import { init_action } from 'luci.sys';
-
 import {
 	wGET, decodeBase64Str, executeCommand, getTime, isEmpty, parseURL,
 	shellQuote, validation, HP_DIR, RUN_DIR
@@ -77,6 +75,10 @@ function log(...args) {
 	const logfile = open(`${RUN_DIR}/homeproxy.log`, 'a');
 	logfile.write(`${getTime()} [SUBSCRIBE] ${join(' ', args)}\n`);
 	logfile.close();
+}
+
+function service_action(action) {
+	return system([ '/etc/init.d/homeproxy-ce', action ]);
 }
 
 function md5hex(value) {
@@ -482,7 +484,7 @@ function parse_uri(uri) {
 function main() {
 	if (via_proxy !== '1') {
 		log('Stopping service...');
-		init_action('homeproxy-ce', 'stop');
+		service_action('stop');
 	}
 
 	for (let url in subscription_urls) {
@@ -554,7 +556,7 @@ function main() {
 
 		if (via_proxy !== '1') {
 			log('Starting service...');
-			init_action('homeproxy-ce', 'start');
+			service_action('start');
 		}
 
 		return false;
@@ -654,8 +656,8 @@ function main() {
 
 	if (need_restart) {
 		log('Restarting service...');
-		init_action('homeproxy-ce', 'stop');
-		init_action('homeproxy-ce', 'start');
+		service_action('stop');
+		service_action('start');
 	}
 
 	log(sprintf('%s nodes added, %s removed.', added, removed));
@@ -671,6 +673,6 @@ if (!isEmpty(subscription_urls))
 		log(e.stacktrace[0].context);
 
 		log('Restarting service...');
-		init_action('homeproxy-ce', 'stop');
-		init_action('homeproxy-ce', 'start');
+		service_action('stop');
+		service_action('start');
 	}
