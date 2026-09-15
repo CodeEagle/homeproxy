@@ -38,6 +38,7 @@ function version_lt(version, major, minor) {
 const legacy_dns_server_format = version_lt(features.version, 1, 13);
 const legacy_dns_resolver_field = version_lt(features.version, 1, 13);
 const legacy_route_rule_format = version_lt(features.version, 1, 11);
+const legacy_inbound_sniff_fields = version_lt(features.version, 1, 13);
 
 /* UCI config start */
 const uci = cursor();
@@ -233,6 +234,49 @@ function parse_dnsquery(strquery) {
 
 	return querys;
 
+}
+
+function add_modern_sniff_rules(rules, inbound_tags) {
+	for (let i = 0; i < length(inbound_tags); i++) {
+		if (inbound_tags[i] === 'dns-in')
+			continue;
+
+		push(rules, {
+			inbound: inbound_tags[i],
+			action: 'sniff'
+		});
+	}
+
+	return rules;
+}
+
+function normalize_dns_rule_for_core(rule, legacy) {
+	if (!legacy && rule.server === 'block-dns') {
+		delete rule.server;
+		/*
+		 * These fields belong to route/route-options or reject actions and
+		 * are not accepted by the predefined action in current sing-box.
+		 */
+		delete rule.strategy;
+		delete rule.disable_cache;
+		delete rule.disable_optimistic_cache;
+		delete rule.rewrite_ttl;
+		delete rule.timeout;
+		delete rule.client_subnet;
+		delete rule.remove_client_subnet;
+		delete rule.method;
+		delete rule.no_drop;
+		rule.action = 'predefined';
+		rule.rcode = 'NXDOMAIN';
+	}
+
+	return rule;
+}
+
+function unsupported_dns_resolver_message(resolver, context) {
+	return 'sing-box 1.13+ cannot represent DNS resolver "' + resolver + '" in ' +
+		(context || 'this field') + ': block-dns was removed; use a DNS rule action ' +
+		'with predefined and rcode NXDOMAIN';
 }
 
 function generate_endpoint(node) {
@@ -442,7 +486,7 @@ function get_outbound(cfg) {
 	}
 }
 
-function get_resolver(cfg) {
+function get_resolver(cfg, context) {
 	if (isEmpty(cfg))
 		return null;
 
@@ -450,6 +494,8 @@ function get_resolver(cfg) {
 	case 'default-dns':
 	case 'system-dns':
 	case 'block-dns':
+		if (cfg === 'block-dns' && !legacy_dns_server_format)
+			die(unsupported_dns_resolver_message(cfg, context));
 		return cfg;
 	default:
 		const dns_server = uci.get_all(uciconfig, cfg) || {};
@@ -570,14 +616,6 @@ config.dns = {
 			tag: 'system-dns',
 			type: 'local',
 			detour: self_mark ? 'direct-out' : null
-		},
-		legacy_dns_server_format ? {
-			tag: 'block-dns',
-			address: 'rcode://name_error'
-		} : {
-			tag: 'block-dns',
-			type: 'rcode',
-			rcode: 'name_error'
 		}
 	],
 	rules: [],
@@ -587,6 +625,12 @@ config.dns = {
 	independent_cache: strToBool(dns_independent_cache),
 	client_subnet: dns_client_subnet
 };
+
+if (legacy_dns_server_format)
+	push(config.dns.servers, {
+		tag: 'block-dns',
+		address: 'rcode://name_error'
+	});
 
 if (!isEmpty(main_node)) {
 	/* Main DNS */
@@ -701,7 +745,7 @@ if (!isEmpty(main_node)) {
 
 			apply_dns_resolver(
 				server,
-				(cfg.address_resolver || cfg.address_strategy) ? get_resolver(cfg.address_resolver || dns_default_server) : null,
+				(cfg.address_resolver || cfg.address_strategy) ? get_resolver(cfg.address_resolver || dns_default_server, 'DNS server resolver') : null,
 				cfg.address_strategy
 			);
 
@@ -713,7 +757,7 @@ if (!isEmpty(main_node)) {
 		if (cfg.enabled !== '1')
 			return;
 
-		push(config.dns.rules, {
+		let dns_rule = {
 			ip_version: strToInt(cfg.ip_version),
 			query_type: parse_dnsquery(cfg.query_type),
 			network: cfg.network,
@@ -741,7 +785,7 @@ if (!isEmpty(main_node)) {
 			invert: strToBool(cfg.invert),
 			outbound: get_outbound(cfg.outbound),
 			action: cfg.action,
-			server: get_resolver(cfg.server),
+			server: (cfg.server === 'block-dns') ? 'block-dns' : get_resolver(cfg.server, 'DNS rule server'),
 			strategy: cfg.domain_strategy,
 			disable_cache: strToBool(cfg.dns_disable_cache),
 			rewrite_ttl: strToInt(cfg.rewrite_ttl),
@@ -752,13 +796,15 @@ if (!isEmpty(main_node)) {
 			answer: cfg.predefined_answer,
 			ns: cfg.predefined_ns,
 			extra: cfg.predefined_extra
-		});
+		};
+
+		push(config.dns.rules, normalize_dns_rule_for_core(dns_rule, legacy_dns_server_format));
 	});
 
 	if (isEmpty(config.dns.rules))
 		config.dns.rules = null;
 
-	config.dns.final = get_resolver(dns_default_server);
+	config.dns.final = get_resolver(dns_default_server, 'DNS final resolver');
 }
 /* DNS end */
 
@@ -778,8 +824,8 @@ push(config.inbounds, {
 	listen: '::',
 	listen_port: int(mixed_port),
 	udp_timeout: strToTime(udp_timeout),
-	sniff: true,
-	sniff_override_destination: strToBool(sniff_override),
+	sniff: legacy_inbound_sniff_fields ? true : null,
+	sniff_override_destination: legacy_inbound_sniff_fields ? strToBool(sniff_override) : null,
 	set_system_proxy: false
 });
 
@@ -790,8 +836,8 @@ if (match(proxy_mode, /redirect/))
 
 		listen: '::',
 		listen_port: int(redirect_port),
-		sniff: true,
-		sniff_override_destination: strToBool(sniff_override)
+		sniff: legacy_inbound_sniff_fields ? true : null,
+		sniff_override_destination: legacy_inbound_sniff_fields ? strToBool(sniff_override) : null
 	});
 if (match(proxy_mode, /tproxy/))
 	push(config.inbounds, {
@@ -802,8 +848,8 @@ if (match(proxy_mode, /tproxy/))
 		listen_port: int(tproxy_port),
 		network: 'udp',
 		udp_timeout: strToTime(udp_timeout),
-		sniff: true,
-		sniff_override_destination: strToBool(sniff_override)
+		sniff: legacy_inbound_sniff_fields ? true : null,
+		sniff_override_destination: legacy_inbound_sniff_fields ? strToBool(sniff_override) : null
 	});
 if (match(proxy_mode, /tun/))
 	push(config.inbounds, {
@@ -817,10 +863,16 @@ if (match(proxy_mode, /tun/))
 		endpoint_independent_nat: strToBool(endpoint_independent_nat),
 		udp_timeout: strToTime(udp_timeout),
 		stack: tcpip_stack,
-		sniff: true,
-		sniff_override_destination: strToBool(sniff_override)
+		sniff: legacy_inbound_sniff_fields ? true : null,
+		sniff_override_destination: legacy_inbound_sniff_fields ? strToBool(sniff_override) : null
 	});
 /* Inbound end */
+
+let sniff_inbound_tags = [];
+if (!legacy_inbound_sniff_fields)
+	for (let inbound in config.inbounds)
+		if (inbound.tag !== 'dns-in')
+			push(sniff_inbound_tags, inbound.tag);
 
 /* Outbound start */
 config.endpoints = [];
@@ -940,7 +992,7 @@ if (!isEmpty(main_node)) {
 				config.endpoints[length(config.endpoints)-1].detour = get_outbound(cfg.outbound);
 				if (cfg.domain_resolver)
 					config.endpoints[length(config.endpoints)-1].domain_resolver = {
-						server: get_resolver(cfg.domain_resolver),
+						server: get_resolver(cfg.domain_resolver, 'endpoint domain resolver'),
 						strategy: cfg.domain_strategy
 					};
 			} else {
@@ -949,7 +1001,7 @@ if (!isEmpty(main_node)) {
 				config.outbounds[length(config.outbounds)-1].detour = get_outbound(cfg.outbound);
 				if (cfg.domain_resolver)
 					config.outbounds[length(config.outbounds)-1].domain_resolver = {
-						server: get_resolver(cfg.domain_resolver),
+						server: get_resolver(cfg.domain_resolver, 'outbound domain resolver'),
 						strategy: cfg.domain_strategy
 					};
 			}
@@ -974,7 +1026,7 @@ if (!isEmpty(main_node)) {
 				config.endpoints[length(config.endpoints)-1].tag = cfg.label || config.endpoints[length(config.endpoints)-1].tag;
 				if (cfg.domain_resolver)
 					config.endpoints[length(config.endpoints)-1].domain_resolver = {
-						server: get_resolver(cfg.domain_resolver),
+						server: get_resolver(cfg.domain_resolver, 'endpoint domain resolver'),
 						strategy: cfg.domain_strategy
 					};
 				config.endpoints[length(config.endpoints)-1].domain_strategy = cfg.domain_strategy;
@@ -985,7 +1037,7 @@ if (!isEmpty(main_node)) {
 				config.outbounds[length(config.outbounds)-1].tag = cfg.label || config.outbounds[length(config.outbounds)-1].tag;
 				if (cfg.domain_resolver)
 					config.outbounds[length(config.outbounds)-1].domain_resolver = {
-						server: get_resolver(cfg.domain_resolver),
+						server: get_resolver(cfg.domain_resolver, 'outbound domain resolver'),
 						strategy: cfg.domain_strategy
 					};
 				config.outbounds[length(config.outbounds)-1].domain_strategy = cfg.domain_strategy;
@@ -1041,22 +1093,26 @@ config.route = {
 			protocol: 'dns',
 			outbound: 'dns-out'
 		}
-	] : [
-		{
-			inbound: 'dns-in',
-			action: 'hijack-dns'
-		}
-		/*
-		 * leave for sing-box 1.13.0
-		 * {
-		 * 	action: 'sniff'
-		 * }
-		 */
-	],
+	] : [],
 	rule_set: [],
 	auto_detect_interface: isEmpty(default_interface) ? true : null,
 	default_interface: default_interface
 };
+
+if (!legacy_route_rule_format) {
+	/*
+	 * Inbound sniff fields were removed in sing-box 1.13. The route sniff
+	 * action has no exact override_destination equivalent, so keep only the
+	 * corresponding early sniff actions and leave DNS inbound untouched.
+	 */
+	if (!legacy_inbound_sniff_fields)
+		add_modern_sniff_rules(config.route.rules, sniff_inbound_tags);
+
+	push(config.route.rules, {
+		inbound: 'dns-in',
+		action: 'hijack-dns'
+	});
+}
 
 /* Routing rules */
 if (!isEmpty(main_node)) {
@@ -1139,7 +1195,7 @@ if (!isEmpty(main_node)) {
 } else if (!isEmpty(default_outbound)) {
 	config.route.default_domain_resolver = {
 		action: 'resolve',
-		server: get_resolver(default_outbound_dns)
+		server: get_resolver(default_outbound_dns, 'route.default_domain_resolver')
 	};
 
 	if (domain_strategy)

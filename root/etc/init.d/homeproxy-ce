@@ -16,6 +16,9 @@ RUN_DIR="/var/run/homeproxy-ce"
 LOG_PATH="$RUN_DIR/homeproxy.log"
 
 export ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS=true
+# Preserve UCI DNS rules that match outbound/any selectors until they can be
+# represented without dropping their conditions or broadening their scope.
+export ENABLE_DEPRECATED_OUTBOUND_DNS_RULE_ITEM=true
 
 # we don't know which is the default server, just take the first one
 DNSMASQ_UCI_CONFIG="$(uci -q show "dhcp.@dnsmasq[0]" | awk 'NR==1 {split($0, conf, /[.=]/); print conf[2]}')"
@@ -157,6 +160,7 @@ start_service() {
 		procd_append_param command run --config "$RUN_DIR/sing-box-c.json"
 
 		procd_set_param env ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS=true
+		procd_append_param env ENABLE_DEPRECATED_OUTBOUND_DNS_RULE_ITEM=true
 		# QUIC-GO GSO is broken on kernel 6.6 currently
 		uname -r | grep -Eq "^6\.6" && procd_append_param env "QUIC_GO_DISABLE_GSO"="true"
 
@@ -202,6 +206,7 @@ start_service() {
 		procd_append_param command run --config "$RUN_DIR/sing-box-s.json"
 
 		procd_set_param env ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS=true
+		procd_append_param env ENABLE_DEPRECATED_OUTBOUND_DNS_RULE_ITEM=true
 		# QUIC-GO GSO is broken on kernel 6.6 currently
 		uname -r | grep -Eq "^6\.6" && procd_append_param env "QUIC_GO_DISABLE_GSO"="true"
 
