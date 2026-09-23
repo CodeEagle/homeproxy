@@ -228,3 +228,232 @@ export function parseURL(url) {
 	return objurl;
 };
 /* String parser end */
+
+/* Outbound group graph helpers start */
+const builtin_outbound_tags = {
+	'direct-out': true,
+	'block-out': true
+};
+
+export function buildNodeReferenceIndex(nodes) {
+	let index = {
+		by_id: {},
+		by_label: {}
+	};
+
+	for (let i = 0; i < length(nodes || []); i++) {
+		const node = nodes[i];
+		const id = node['.name'];
+
+		index.by_id[id] = node;
+		if (node.label) {
+			if (!index.by_label[node.label])
+				index.by_label[node.label] = [];
+
+			const matches = index.by_label[node.label];
+			matches[length(matches)] = id;
+		}
+	}
+
+	return index;
+};
+
+export function resolveNodeReference(node_index, reference) {
+	if (builtin_outbound_tags[reference])
+		return {
+			status: 'ok',
+			id: reference,
+			tag: reference
+		};
+
+	if (node_index.by_id[reference])
+		return {
+			status: 'ok',
+			id: reference,
+			tag: `cfg-${reference}-out`
+		};
+
+	const matches = node_index.by_label[reference] || [];
+	if (length(matches) === 1)
+		return {
+			status: 'ok',
+			id: matches[0],
+			tag: `cfg-${matches[0]}-out`
+		};
+
+	return length(matches) > 1
+		? {
+			status: 'ambiguous',
+			reference,
+			matches
+		}
+		: {
+			status: 'missing',
+			reference
+		};
+};
+
+export function normalizeNodeGroup(group, node_index) {
+	let outbounds = [];
+	const references = group.outbounds || [];
+
+	for (let i = 0; i < length(references); i++) {
+		const reference = references[i];
+		const resolved = resolveNodeReference(node_index, reference);
+		if (resolved.status !== 'ok')
+			return resolved;
+
+		if (resolved.id === group['.name'])
+			return {
+				status: 'error',
+				kind: 'self-reference',
+				reference
+			};
+
+		let duplicate = false;
+		for (let j = 0; j < length(outbounds); j++) {
+			if (outbounds[j] === resolved.id) {
+				duplicate = true;
+				break;
+			}
+		}
+		if (!duplicate)
+			outbounds[length(outbounds)] = resolved.id;
+	}
+
+	if (!length(outbounds))
+		return {
+			status: 'error',
+			kind: 'empty-group',
+			reference: group['.name']
+		};
+
+	let default_id = null;
+	if (group.default) {
+		const resolved_default = resolveNodeReference(node_index, group.default);
+		if (resolved_default.status !== 'ok')
+			return resolved_default;
+
+		default_id = resolved_default.id;
+		let default_member = false;
+		for (let i = 0; i < length(outbounds); i++) {
+			if (outbounds[i] === default_id) {
+				default_member = true;
+				break;
+			}
+		}
+		if (!default_member)
+			return {
+				status: 'error',
+				kind: 'invalid-default',
+				reference: group.default
+			};
+	}
+
+	return {
+		status: 'ok',
+		outbounds,
+		default: default_id
+	};
+};
+
+export function planNodeDependencies(node_index, roots) {
+	let visiting = {};
+	let visited = {};
+	let path = [];
+	let path_length = 0;
+	let order = [];
+
+	function copyActivePath() {
+		let trace = [];
+		for (let i = 0; i < path_length; i++)
+			trace[length(trace)] = path[i];
+		return trace;
+	}
+
+	function asError(result) {
+		return {
+			status: 'error',
+			kind: result.status === 'error' ? result.kind : result.status,
+			reference: result.reference,
+			path: copyActivePath()
+		};
+	}
+
+	function copyPathFrom(id) {
+		let start = 0;
+		for (let i = 0; i < path_length; i++) {
+			if (path[i] === id) {
+				start = i;
+				break;
+			}
+		}
+
+		let cycle = [];
+		for (let i = start; i < path_length; i++)
+			cycle[length(cycle)] = path[i];
+		cycle[length(cycle)] = id;
+		return cycle;
+	}
+
+	function visit(reference) {
+		const resolved = resolveNodeReference(node_index, reference);
+		if (resolved.status !== 'ok')
+			return asError(resolved);
+
+		const id = resolved.id;
+		if (builtin_outbound_tags[id])
+			return null;
+
+		if (visiting[id])
+			return {
+				status: 'error',
+				kind: 'cycle',
+				reference: id,
+				path: copyPathFrom(id)
+			};
+
+		if (visited[id])
+			return null;
+
+		const node = node_index.by_id[id];
+		if (node.type === 'selector' || node.type === 'urltest') {
+			visiting[id] = true;
+			path[path_length] = id;
+			path_length++;
+
+			const normalized = normalizeNodeGroup(node, node_index);
+			if (normalized.status !== 'ok')
+				return asError(normalized);
+
+			for (let i = 0; i < length(normalized.outbounds); i++) {
+				const error = visit(normalized.outbounds[i]);
+				if (error)
+					return error;
+			}
+
+			visiting[id] = false;
+			visited[id] = true;
+			path_length--;
+			path[path_length] = null;
+			order[length(order)] = id;
+			return null;
+		}
+
+		visited[id] = true;
+		order[length(order)] = id;
+		return null;
+	}
+
+	for (let i = 0; i < length(roots || []); i++) {
+		const error = visit(roots[i]);
+		if (error)
+			return error;
+	}
+
+	return {
+		status: 'ok',
+		order
+	};
+};
+/* Outbound group graph helpers end */
