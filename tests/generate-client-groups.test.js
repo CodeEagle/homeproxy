@@ -103,6 +103,15 @@ const nodes = [
 
 const referenceIndex = helpers.buildNodeReferenceIndex(nodes);
 
+test('declares outbound reference indexes before helpers that capture them', () => {
+	const declarations = source.indexOf('let node_sections = []');
+	const getOutbound = source.indexOf('function get_outbound(cfg, section)');
+
+	assert.notEqual(declarations, -1);
+	assert.notEqual(getOutbound, -1);
+	assert.ok(declarations < getOutbound);
+});
+
 test('generates selector groups with only selector fields and stable outbound tags', () => {
 	assert.deepEqual(
 		plain(generate_outbound(nodes[3], referenceIndex)),
@@ -307,6 +316,24 @@ test('includes external UI detour in planned dependency roots', () => {
 		plain(collectClientDependencyRoots({ main: [], custom: [], externalUiDetour: 'g1' })),
 		['g1']
 	);
+});
+
+test('does not plan special outbound matchers as proxy nodes', () => {
+	const { addNodeDependencyRoot } = extractUcodeFunctions(
+		source,
+		['addNodeDependencyRoot'],
+		{
+			...context,
+			routing_node_sections: {}
+		}
+	);
+	const roots = [];
+	const seen = {};
+
+	addNodeDependencyRoot(roots, ['any', 'any-out', 'direct-out'], seen, 'dns-rule');
+	assert.deepEqual(plain(roots), []);
+	addNodeDependencyRoot(roots, 'n1', seen, 'dns-rule');
+	assert.deepEqual(plain(roots), ['n1']);
 });
 
 test('preserves routing metadata by applying it to group leaves, not the group object', () => {
@@ -629,6 +656,7 @@ test('assembles an end-to-end client config with nested groups, legacy URLTest a
 
 	assert.equal(fixtureHelpers.get_outbound('legacy-auto', 'routing-rule'), 'cfg-legacy-auto-out');
 	assert.equal(fixtureHelpers.get_outbound('g2', 'routing-rule'), 'cfg-g2-out');
+	assert.equal(fixtureHelpers.get_outbound('any', 'dns-rule'), 'any');
 	assert.throws(
 		() => fixtureHelpers.buildExperimentalConfig({
 			run_dir: '/var/run/homeproxy-ce',

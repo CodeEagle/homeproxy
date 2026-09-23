@@ -646,6 +646,10 @@ function generate_outbound(node, reference_index) {
 	return outbound;
 }
 
+let node_sections = [],
+	routing_node_sections = {},
+	node_reference_index;
+
 function get_outbound(cfg, section) {
 	if (isEmpty(cfg))
 		return null;
@@ -665,6 +669,8 @@ function get_outbound(cfg, section) {
 		case 'main-out':
 		case 'main-udp-out':
 			return cfg;
+		case 'any':
+			return 'any';
 		}
 
 		const routing_node = routing_node_sections[cfg];
@@ -960,10 +966,6 @@ function normalizeGeneratedOutbound(outbound, outbound_tags) {
 
 const config = {};
 
-let node_sections = [],
-	routing_node_sections = {},
-	node_reference_index;
-
 uci.foreach(uciconfig, ucinode, (cfg) => {
 	push(node_sections, cfg);
 });
@@ -985,6 +987,7 @@ function addNodeDependencyRoot(roots, reference, seen, section) {
 	}
 
 	if (reference === 'direct-out' || reference === 'block-out' ||
+		reference === 'any' || reference === 'any-out' ||
 		reference === 'main-out' || reference === 'main-udp-out')
 		return;
 

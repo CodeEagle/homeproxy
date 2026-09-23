@@ -1,11 +1,17 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const test = require('node:test');
 
 const { loadLuCIModule } = require('./helpers/load-luci-module');
 
 const hp = loadLuCIModule();
+const nodeViewSource = fs.readFileSync(
+	path.join(__dirname, '..', 'htdocs/luci-static/resources/view/homeproxy-ce/node.js'),
+	'utf8'
+);
 const nodes = [
 	{ '.name': 'n1', label: '香港', type: 'vless' },
 	{ '.name': 'n2', label: '洛杉矶', type: 'trojan' },
@@ -16,6 +22,11 @@ const nodes = [
 function plain(value) {
 	return JSON.parse(JSON.stringify(value));
 }
+
+test('subscription refresh executes the CE updater allowed by the RPC ACL', () => {
+	assert.match(nodeViewSource, /fs\.exec_direct\('\/etc\/homeproxy-ce\/scripts\/update_subscriptions\.uc'\)/);
+	assert.doesNotMatch(nodeViewSource, /fs\.exec_direct\('\/etc\/homeproxy\/scripts\/update_subscriptions\.uc'\)/);
+});
 
 test('nodeGroupChoices uses section IDs as values and labels for display', () => {
 	assert.deepEqual(plain(hp.nodeGroupChoices(nodes, 'g1')), [
