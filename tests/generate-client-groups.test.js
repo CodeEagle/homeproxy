@@ -243,6 +243,28 @@ test('normalizes generated groups strictly and preserves their field whitelist',
 	);
 });
 
+test('rejects empty main and legacy routing URLTest groups during final normalization', () => {
+	const { normalizeGeneratedOutbound } = extractUcodeFunctions(
+		source,
+		['strictOutboundTag', 'strictFilterOutbounds', 'normalizeGeneratedOutbound'],
+		{
+			...context,
+			legacy_dns_server_format: false,
+			has_outbound: (tags, tag) => !!(tag && tags[tag]),
+			normalize_outbound: (tags, tag) => tags[tag] ? tag : 'direct-out',
+			filter_outbounds: (tags, tagsToFilter) => tagsToFilter.filter((tag) => tags[tag]),
+			formatNodeReferenceError: (result) =>
+				`invalid outbound reference: section=${result.section} reference=${result.reference} path=${result.path}`
+		}
+	);
+
+	for (const tag of ['main-out', 'cfg-r1-out'])
+		assert.throws(
+			() => normalizeGeneratedOutbound({ type: 'urltest', tag, outbounds: [] }, {}),
+			(error) => error.message.includes(`section=${tag}`) && error.message.includes('path')
+		);
+});
+
 test('keeps a stable cfg tag when main-out is added for a referenced node', () => {
 	const runtime = {
 		generated_outbounds: {

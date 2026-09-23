@@ -791,6 +791,15 @@ function strictFilterOutbounds(outbound_tags, tags, section) {
 		if (!duplicate)
 			push(filtered, tag);
 	}
+	if (!length(filtered)) {
+		const result = {
+			status: 'empty-group',
+			reference: section,
+			section,
+			path: [section]
+		};
+		die(formatNodeReferenceError(result));
+	}
 	return filtered;
 }
 
