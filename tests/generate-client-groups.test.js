@@ -48,6 +48,7 @@ const helpers = extractUcodeFunctions(
 
 const context = {
 	...helpers,
+	self_mark: null,
 	length: (value) => value.length,
 	isEmpty: (value) => !value || value === 'nil' ||
 		(Array.isArray(value) || (value && typeof value === 'object')) && value.length === 0,
@@ -403,4 +404,119 @@ test('keeps legacy routing URLTest output alongside node URLTest output', () => 
 		plain(collectPlannedNodes(nodes, ['g1']).map((node) => node['.name'])),
 		['n1', 'n2', 'g1']
 	);
+});
+
+test('assembles an end-to-end client config with nested groups, legacy URLTest and experimental settings', () => {
+	const configuredOutboundTag = (reference) => {
+		if (['direct-out', 'block-out'].includes(reference))
+			return reference;
+		return `cfg-${reference}-out`;
+	};
+	const fixtureHelpers = extractUcodeFunctions(
+		source,
+		['buildDnsRule', 'buildRouteRule', 'generateLegacyRoutingUrltest'],
+		{
+			...context,
+			configuredOutboundTag,
+			parse_dnsquery: (value) => value,
+			parse_port: (value) => value,
+			get_outbound: configuredOutboundTag,
+			get_resolver: (value) => value,
+			get_ruleset: (value) => value
+		}
+	);
+
+	const routingNodes = [
+		{
+			'.name': 'legacy-auto',
+			node: 'urltest',
+			urltest_nodes: ['n1', 'n2'],
+			urltest_url: 'https://example.com/204',
+			urltest_interval: '180',
+			urltest_tolerance: '50',
+			urltest_idle_timeout: '1800'
+		}
+	];
+	const plannedNodes = collectPlannedNodes(nodes, ['g2']);
+	const generatedOutbounds = plannedNodes.map((node) => generate_outbound(node, referenceIndex));
+	const legacyOutbounds = routingNodes.map((routingNode) =>
+		fixtureHelpers.generateLegacyRoutingUrltest(routingNode)
+	);
+	const generated = {
+		outbounds: [
+			{ type: 'direct', tag: 'direct-out' },
+			{ type: 'block', tag: 'block-out' },
+			...generatedOutbounds,
+			...legacyOutbounds
+		],
+		dns: {
+			rules: [fixtureHelpers.buildDnsRule({ clash_mode: 'global', outbound: 'g2' })]
+		},
+		route: {
+			rules: [fixtureHelpers.buildRouteRule({ clash_mode: 'rule', outbound: 'g2' })]
+		},
+		experimental: {
+			cache_file: {
+				enabled: true,
+				path: '/var/run/homeproxy-ce/cache.db'
+			},
+			clash_api: {
+				external_controller: '127.0.0.1:9090',
+				default_mode: 'rule'
+			}
+		}
+	};
+
+	const tags = generated.outbounds.map((outbound) => outbound.tag);
+	assert.deepEqual(tags, [
+		'direct-out',
+		'block-out',
+		'cfg-n1-out',
+		'cfg-n2-out',
+		'cfg-g1-out',
+		'cfg-g2-out',
+		'cfg-legacy-auto-out'
+	]);
+	assert.deepEqual(
+		plain(generated.outbounds.filter((outbound) => outbound.type === 'urltest')),
+		[
+			{
+				type: 'urltest',
+				tag: 'cfg-g1-out',
+				outbounds: ['cfg-n1-out', 'cfg-n2-out'],
+				url: 'https://www.gstatic.com/generate_204',
+				interval: '180s',
+				tolerance: 50,
+				idle_timeout: '1800s'
+			},
+			{
+				type: 'urltest',
+				tag: 'cfg-legacy-auto-out',
+				outbounds: ['cfg-n1-out', 'cfg-n2-out'],
+				url: 'https://example.com/204',
+				interval: '180s',
+				tolerance: 50,
+				idle_timeout: '1800s'
+			}
+		]
+	);
+	assert.deepEqual(plain(generated.outbounds.find((outbound) => outbound.type === 'selector')), {
+		type: 'selector',
+		tag: 'cfg-g2-out',
+		outbounds: ['cfg-g1-out', 'cfg-n2-out'],
+		default: 'cfg-n2-out',
+		interrupt_exist_connections: true
+	});
+	assert.equal(generated.dns.rules[0].clash_mode, 'global');
+	assert.equal(generated.dns.rules[0].outbound, 'cfg-g2-out');
+	assert.equal(generated.route.rules[0].clash_mode, 'rule');
+	assert.equal(generated.route.rules[0].outbound, 'cfg-g2-out');
+	assert.deepEqual(plain(generated.experimental.cache_file), {
+		enabled: true,
+		path: '/var/run/homeproxy-ce/cache.db'
+	});
+	assert.deepEqual(plain(generated.experimental.clash_api), {
+		external_controller: '127.0.0.1:9090',
+		default_mode: 'rule'
+	});
 });

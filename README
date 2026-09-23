@@ -3,3 +3,13 @@ TODO:
 - Refactor nft rules
 - Move ACL settings to a dedicated page
 - Any other improvements
+
+Outbound groups and node references
+-----------------------------------
+
+Selector and URLTest groups refer to nodes by their UCI section ID. The section
+ID is an internal reference and is not the display name, so a node or group
+label can be renamed safely. On upgrade, a unique legacy label reference is
+migrated to its section ID; ambiguous or missing labels are left for review.
+Before deleting a node, remove it from every group that references it. This
+example contains no subscription URLs, server addresses, or credentials.
