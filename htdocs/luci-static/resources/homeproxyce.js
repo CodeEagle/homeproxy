@@ -194,6 +194,10 @@ function validateNodeGroupGraph(nodes, rootId) {
 }
 
 return baseclass.extend({
+	formElementId(config, sectionId, option) {
+		return `cbid.${config}.${sectionId}.${option}`;
+	},
+
 	dns_strategy: {
 		'': _('Default'),
 		'prefer_ipv4': _('Prefer IPv4'),
@@ -535,7 +539,7 @@ return baseclass.extend({
 
 	validateCertificatePath(section_id, value) {
 		if (section_id && value)
-			if (!value.match(/^(\/etc\/homeproxy\/certs\/|\/etc\/acme\/|\/etc\/ssl\/).+$/))
+			if (!value.match(/^(\/etc\/homeproxy-ce\/certs\/|\/etc\/acme\/|\/etc\/ssl\/).+$/))
 				return _('Expecting: %s').format(_('/etc/homeproxy-ce/certs/..., /etc/acme/..., /etc/ssl/...'));
 
 		return true;

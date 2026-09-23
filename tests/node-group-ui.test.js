@@ -28,6 +28,18 @@ test('subscription refresh executes the CE updater allowed by the RPC ACL', () =
 	assert.doesNotMatch(nodeViewSource, /fs\.exec_direct\('\/etc\/homeproxy\/scripts\/update_subscriptions\.uc'\)/);
 });
 
+test('formElementId addresses controls in the HomeProxy CE UCI map', () => {
+	assert.equal(
+		hp.formElementId('homeproxy-ce', 'rx78_node', 'tls'),
+		'cbid.homeproxy-ce.rx78_node.tls'
+	);
+});
+
+test('certificate validation accepts the HomeProxy CE certificate directory', () => {
+	assert.equal(hp.validateCertificatePath('rx78_node', '/etc/homeproxy-ce/certs/client.pem'), true);
+	assert.match(hp.validateCertificatePath('rx78_node', '/tmp/client.pem'), /Expecting/);
+});
+
 test('nodeGroupChoices uses section IDs as values and labels for display', () => {
 	assert.deepEqual(plain(hp.nodeGroupChoices(nodes, 'g1')), [
 		{ value: 'n1', label: '香港' },

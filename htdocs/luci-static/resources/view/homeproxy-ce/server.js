@@ -408,7 +408,7 @@ return view.extend({
 		o.depends('type', 'vless');
 		o.depends('type', 'vmess');
 		o.onchange = function(ev, section_id, value) {
-			let desc = this.map.findElement('id', 'cbid.homeproxy.%s.transport'.format(section_id)).nextElementSibling;
+			let desc = this.map.findElement('id', hp.formElementId(this.map.config, section_id, 'transport')).nextElementSibling;
 			if (value === 'http')
 				desc.innerHTML = _('TLS is not enforced. If TLS is not configured, plain HTTP 1.1 is used.');
 			else if (value === 'quic')
@@ -416,12 +416,12 @@ return view.extend({
 			else
 				desc.innerHTML = _('No TCP transport, plain HTTP is merged into the HTTP transport.');
 
-			let tls_element = this.map.findElement('id', 'cbid.homeproxy.%s.tls'.format(section_id)).firstElementChild;
+			let tls_element = this.map.findElement('id', hp.formElementId(this.map.config, section_id, 'tls')).firstElementChild;
 			if ((value === 'http' && tls_element.checked) || (value === 'grpc' && !features.with_grpc))
-				this.map.findElement('id', 'cbid.homeproxy.%s.http_idle_timeout'.format(section_id)).nextElementSibling.innerHTML =
+				this.map.findElement('id', hp.formElementId(this.map.config, section_id, 'http_idle_timeout')).nextElementSibling.innerHTML =
 					_('Specifies the time (in seconds) until idle clients should be closed with a GOAWAY frame. PING frames are not considered as activity.');
 			else if (value === 'grpc' && features.with_grpc)
-				this.map.findElement('id', 'cbid.homeproxy.%s.http_idle_timeout'.format(section_id)).nextElementSibling.innerHTML =
+				this.map.findElement('id', hp.formElementId(this.map.config, section_id, 'http_idle_timeout')).nextElementSibling.innerHTML =
 					_('If the transport doesn\'t see any activity after a duration of this time (in seconds), it pings the client to check if the connection is still active.');
 		}
 		o.modalonly = true;
@@ -543,7 +543,7 @@ return view.extend({
 		o.validate = function(section_id, value) {
 			if (section_id) {
 				let type = this.map.lookupOption('type', section_id)[0].formvalue(section_id);
-				let tls = this.map.findElement('id', 'cbid.homeproxy.%s.tls'.format(section_id)).firstElementChild;
+				let tls = this.map.findElement('id', hp.formElementId(this.map.config, section_id, 'tls')).firstElementChild;
 
 				if (['hysteria', 'hysteria2', 'tuic'].includes(type)) {
 					tls.checked = true;

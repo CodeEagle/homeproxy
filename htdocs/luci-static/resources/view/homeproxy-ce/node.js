@@ -937,7 +937,7 @@ function renderNodeSettings(section, data, features, main_node, routing_mode) {
 	o.depends('type', 'vless');
 	o.depends('type', 'vmess');
 	o.onchange = function(ev, section_id, value) {
-		let desc = this.map.findElement('id', 'cbid.homeproxy.%s.transport'.format(section_id)).nextElementSibling;
+		let desc = this.map.findElement('id', hp.formElementId(this.map.config, section_id, 'transport')).nextElementSibling;
 		if (value === 'http')
 			desc.innerHTML = _('TLS is not enforced. If TLS is not configured, plain HTTP 1.1 is used.');
 		else if (value === 'quic')
@@ -945,20 +945,20 @@ function renderNodeSettings(section, data, features, main_node, routing_mode) {
 		else
 			desc.innerHTML = _('No TCP transport, plain HTTP is merged into the HTTP transport.');
 
-		let tls = this.map.findElement('id', 'cbid.homeproxy.%s.tls'.format(section_id)).firstElementChild;
+		let tls = this.map.findElement('id', hp.formElementId(this.map.config, section_id, 'tls')).firstElementChild;
 		if ((value === 'http' && tls.checked) || (value === 'grpc' && !features.with_grpc)) {
-			this.map.findElement('id', 'cbid.homeproxy.%s.http_idle_timeout'.format(section_id)).nextElementSibling.innerHTML =
+			this.map.findElement('id', hp.formElementId(this.map.config, section_id, 'http_idle_timeout')).nextElementSibling.innerHTML =
 				_('Specifies the period of time (in seconds) after which a health check will be performed using a ping frame if no frames have been received on the connection.<br/>' +
 					'Please note that a ping response is considered a received frame, so if there is no other traffic on the connection, the health check will be executed every interval.');
 
-			this.map.findElement('id', 'cbid.homeproxy.%s.http_ping_timeout'.format(section_id)).nextElementSibling.innerHTML =
+			this.map.findElement('id', hp.formElementId(this.map.config, section_id, 'http_ping_timeout')).nextElementSibling.innerHTML =
 				_('Specifies the timeout duration (in seconds) after sending a PING frame, within which a response must be received.<br/>' +
 					'If a response to the PING frame is not received within the specified timeout duration, the connection will be closed.');
 		} else if (value === 'grpc' && features.with_grpc) {
-			this.map.findElement('id', 'cbid.homeproxy.%s.http_idle_timeout'.format(section_id)).nextElementSibling.innerHTML =
+			this.map.findElement('id', hp.formElementId(this.map.config, section_id, 'http_idle_timeout')).nextElementSibling.innerHTML =
 				_('If the transport doesn\'t see any activity after a duration of this time (in seconds), it pings the client to check if the connection is still active.');
 
-			this.map.findElement('id', 'cbid.homeproxy.%s.http_ping_timeout'.format(section_id)).nextElementSibling.innerHTML =
+			this.map.findElement('id', hp.formElementId(this.map.config, section_id, 'http_ping_timeout')).nextElementSibling.innerHTML =
 				_('The timeout (in seconds) that after performing a keepalive check, the client will wait for activity. If no activity is detected, the connection will be closed.');
 		}
 	}
@@ -1168,7 +1168,7 @@ function renderNodeSettings(section, data, features, main_node, routing_mode) {
 	o.validate = function(section_id, _value) {
 		if (section_id) {
 			let type = this.map.lookupOption('type', section_id)[0].formvalue(section_id);
-			let tls = this.map.findElement('id', 'cbid.homeproxy.%s.tls'.format(section_id)).firstElementChild;
+			let tls = this.map.findElement('id', hp.formElementId(this.map.config, section_id, 'tls')).firstElementChild;
 
 			if (['anytls', 'hysteria', 'hysteria2', 'shadowtls', 'tuic'].includes(type)) {
 				tls.checked = true;
@@ -1281,7 +1281,7 @@ function renderNodeSettings(section, data, features, main_node, routing_mode) {
 		o.depends({'tls': '1', 'type': /^((?!hysteria2?|tuic$).)+$/});
 		o.validate = function(section_id, value) {
 			if (section_id) {
-				let tls_reality = this.map.findElement('id', 'cbid.homeproxy.%s.tls_reality'.format(section_id)).firstElementChild;
+				let tls_reality = this.map.findElement('id', hp.formElementId(this.map.config, section_id, 'tls_reality')).firstElementChild;
 				if (tls_reality.checked && !value)
 					return _('Expecting: %s').format(_('non-empty value'));
 
