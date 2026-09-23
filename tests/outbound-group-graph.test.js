@@ -41,13 +41,20 @@ test('extractUcodeFunctions evaluates a complete nested function body', () => {
 });
 
 const {
+	allocateUniqueOutboundTag,
 	buildNodeReferenceIndex,
 	resolveNodeReference,
 	normalizeNodeGroup,
 	planNodeDependencies
 } = extractUcodeFunctions(
 	source,
-	['buildNodeReferenceIndex', 'resolveNodeReference', 'normalizeNodeGroup', 'planNodeDependencies'],
+	[
+		'allocateUniqueOutboundTag',
+		'buildNodeReferenceIndex',
+		'resolveNodeReference',
+		'normalizeNodeGroup',
+		'planNodeDependencies'
+	],
 	ucodeContext
 );
 
@@ -70,12 +77,12 @@ test('resolves section IDs, unique labels, and built-in outbound tags', () => {
 	assert.deepEqual(plain(resolveNodeReference(index, 'n1')), {
 		status: 'ok',
 		id: 'n1',
-		tag: 'cfg-n1-out'
+		tag: 'Hong Kong'
 	});
 	assert.deepEqual(plain(resolveNodeReference(index, 'Hong Kong')), {
 		status: 'ok',
 		id: 'n1',
-		tag: 'cfg-n1-out'
+		tag: 'Hong Kong'
 	});
 	assert.deepEqual(plain(resolveNodeReference(index, 'direct-out')), {
 		status: 'ok',
@@ -103,6 +110,22 @@ test('reports duplicate labels as ambiguous and unknown references as missing', 
 	assert.deepEqual(plain(resolveNodeReference(buildNodeReferenceIndex(nodes), 'missing-node')), {
 		status: 'missing',
 		reference: 'missing-node'
+	});
+});
+
+test('uses readable unique tags while safely disambiguating duplicate and reserved labels', () => {
+	const index = buildNodeReferenceIndex([
+		{ '.name': 'n1', label: 'Hong Kong', type: 'vless' },
+		{ '.name': 'n2', label: 'Hong Kong', type: 'trojan' },
+		{ '.name': 'n3', label: 'direct-out', type: 'shadowsocks' },
+		{ '.name': 'n4', type: 'socks' }
+	]);
+
+	assert.deepEqual(plain(index.tag_by_id), {
+		n1: 'Hong Kong [n1]',
+		n2: 'Hong Kong [n2]',
+		n3: 'direct-out [n3]',
+		n4: 'n4'
 	});
 });
 

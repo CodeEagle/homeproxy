@@ -235,10 +235,38 @@ const builtin_outbound_tags = {
 	'block-out': true
 };
 
+export function allocateUniqueOutboundTag(used_tags, label, id) {
+	const base = label || id;
+	let tag = base;
+	let suffix = 2;
+
+	if (used_tags[tag])
+		tag = `${base} [${id}]`;
+
+	while (used_tags[tag]) {
+		tag = `${base} [${id}-${suffix}]`;
+		suffix++;
+	}
+
+	used_tags[tag] = true;
+	return tag;
+};
+
 export function buildNodeReferenceIndex(nodes) {
 	let index = {
 		by_id: {},
-		by_label: {}
+		by_label: {},
+		tag_by_id: {},
+		used_tags: {
+			'direct-out': true,
+			'block-out': true,
+			'main-out': true,
+			'main-udp-out': true,
+			'dns-out': true,
+			'GLOBAL': true,
+			'DIRECT': true,
+			'REJECT': true
+		}
 	};
 
 	for (let i = 0; i < length(nodes || []); i++) {
@@ -253,6 +281,17 @@ export function buildNodeReferenceIndex(nodes) {
 			const matches = index.by_label[node.label];
 			matches[length(matches)] = id;
 		}
+	}
+
+	for (let i = 0; i < length(nodes || []); i++) {
+		const node = nodes[i];
+		const id = node['.name'];
+		let label = node.label || id;
+
+		if (node.label && length(index.by_label[node.label] || []) > 1)
+			label = `${label} [${id}]`;
+
+		index.tag_by_id[id] = allocateUniqueOutboundTag(index.used_tags, label, id);
 	}
 
 	return index;
@@ -270,7 +309,7 @@ export function resolveNodeReference(node_index, reference) {
 		return {
 			status: 'ok',
 			id: reference,
-			tag: `cfg-${reference}-out`
+			tag: node_index.tag_by_id[reference]
 		};
 
 	const matches = node_index.by_label[reference] || [];
@@ -278,7 +317,7 @@ export function resolveNodeReference(node_index, reference) {
 		return {
 			status: 'ok',
 			id: matches[0],
-			tag: `cfg-${matches[0]}-out`
+			tag: node_index.tag_by_id[matches[0]]
 		};
 
 	return length(matches) > 1

@@ -18,7 +18,7 @@ const homeproxySource = fs.readFileSync(
 
 const helpers = extractUcodeFunctions(
 	homeproxySource,
-	['buildNodeReferenceIndex', 'resolveNodeReference'],
+	['allocateUniqueOutboundTag', 'buildNodeReferenceIndex', 'resolveNodeReference'],
 	{
 		length: (value) => value.length,
 		builtin_outbound_tags: { 'direct-out': true, 'block-out': true }

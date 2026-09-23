@@ -36,7 +36,13 @@ function removeBlankAttrs(value) {
 
 const helpers = extractUcodeFunctions(
 	homeproxySource,
-	['buildNodeReferenceIndex', 'resolveNodeReference', 'normalizeNodeGroup', 'planNodeDependencies'],
+	[
+		'allocateUniqueOutboundTag',
+		'buildNodeReferenceIndex',
+		'resolveNodeReference',
+		'normalizeNodeGroup',
+		'planNodeDependencies'
+	],
 	{
 		builtin_outbound_tags: {
 			'direct-out': true,
@@ -117,9 +123,9 @@ test('generates selector groups with only selector fields and stable outbound ta
 		plain(generate_outbound(nodes[3], referenceIndex)),
 		{
 			type: 'selector',
-			tag: 'cfg-g2-out',
-			outbounds: ['cfg-g1-out', 'cfg-n2-out'],
-			default: 'cfg-n2-out',
+			tag: 'Manual',
+			outbounds: ['Auto', 'Los Angeles'],
+			default: 'Los Angeles',
 			interrupt_exist_connections: true
 		}
 	);
@@ -127,8 +133,8 @@ test('generates selector groups with only selector fields and stable outbound ta
 		plain(generate_outbound({ ...nodes[3], default: null }, referenceIndex)),
 		{
 			type: 'selector',
-			tag: 'cfg-g2-out',
-			outbounds: ['cfg-g1-out', 'cfg-n2-out'],
+			tag: 'Manual',
+			outbounds: ['Auto', 'Los Angeles'],
 			interrupt_exist_connections: true
 		}
 	);
@@ -139,8 +145,8 @@ test('generates URLTest groups with URLTest fields and no proxy dial fields', ()
 
 	assert.deepEqual(plain(outbound), {
 		type: 'urltest',
-		tag: 'cfg-g1-out',
-		outbounds: ['cfg-n1-out', 'cfg-n2-out'],
+		tag: 'Auto',
+		outbounds: ['Hong Kong', 'Los Angeles'],
 		url: 'https://www.gstatic.com/generate_204',
 		interval: '180s',
 		tolerance: 50,
@@ -160,11 +166,11 @@ test('plans all transitive nodes in dependency order and keeps IDs stable across
 	renamed[0].label = '香港';
 	const renamedIndex = helpers.buildNodeReferenceIndex(renamed);
 	assert.deepEqual(plain(generate_outbound(renamed[3], renamedIndex).outbounds), [
-		'cfg-g1-out',
-		'cfg-n2-out'
+		'Auto',
+		'Los Angeles'
 	]);
-	assert.equal(outboundTag('n1'), 'cfg-n1-out');
-	assert.equal(outboundTag('direct-out'), 'direct-out');
+	assert.equal(outboundTag('n1', referenceIndex), 'Hong Kong');
+	assert.equal(outboundTag('direct-out', referenceIndex), 'direct-out');
 });
 
 test('rejects missing and cyclic references with diagnostic section, reference, and path', () => {
@@ -275,19 +281,20 @@ test('rejects empty main and legacy routing URLTest groups during final normaliz
 		);
 });
 
-test('keeps a stable cfg tag when main-out is added for a referenced node', () => {
+test('keeps a readable tag when main-out is added for a referenced node', () => {
 	const runtime = {
 		generated_outbounds: {
-			n1: { type: 'vless', tag: 'cfg-n1-out' }
+			n1: { type: 'vless', tag: 'Hong Kong' }
 		},
 		generated_endpoints: {},
 		config: {
 			outbounds: [
-				{ type: 'selector', tag: 'cfg-g1-out', outbounds: ['cfg-n1-out'] }
+				{ type: 'selector', tag: 'Auto', outbounds: ['Hong Kong'] }
 			],
 			endpoints: []
 		},
-		outboundTag: (id) => `cfg-${id}-out`,
+		outboundTag: (id) => referenceIndex.tag_by_id[id],
+		node_reference_index: referenceIndex,
 		push: (array, value) => array.push(value),
 		length: (value) => value.length,
 		isEmpty: (value) => !value || value === 'nil',
@@ -296,7 +303,7 @@ test('keeps a stable cfg tag when main-out is added for a referenced node', () =
 	const { tagGeneratedNode } = extractUcodeFunctions(source, ['tagGeneratedNode'], runtime);
 
 	assert.doesNotThrow(() => tagGeneratedNode('n1', 'main-out', runtime.config));
-	assert.equal(runtime.generated_outbounds.n1.tag, 'cfg-n1-out');
+	assert.equal(runtime.generated_outbounds.n1.tag, 'Hong Kong');
 	assert.equal(runtime.config.outbounds.length, 2);
 	assert.equal(runtime.config.outbounds[1].tag, 'main-out');
 });
@@ -540,7 +547,8 @@ function generatorHelpers() {
 		['buildDnsRule', 'buildRouteRule', 'generateLegacyRoutingUrltest'],
 		{
 			...context,
-			configuredOutboundTag: (reference) => `cfg-${reference}-out`,
+			configuredOutboundTag: (reference) => referenceIndex.tag_by_id[reference],
+			routing_node_tags: { r1: 'Legacy Auto' },
 			parse_dnsquery: (value) => value,
 			parse_port: (value) => value,
 			get_outbound: (value) => value,
@@ -562,6 +570,7 @@ test('keeps legacy routing URLTest output alongside node URLTest output', () => 
 
 	const legacy = helpers.generateLegacyRoutingUrltest({
 		'.name': 'r1',
+		label: 'Legacy Auto',
 		node: 'urltest',
 		urltest_nodes: ['n1', 'n2'],
 		urltest_url: 'https://example.com/204',
@@ -570,8 +579,8 @@ test('keeps legacy routing URLTest output alongside node URLTest output', () => 
 		urltest_idle_timeout: '1800'
 	});
 
-	assert.equal(legacy.tag, 'cfg-r1-out');
-	assert.equal(plain(generate_outbound(nodes[2], referenceIndex)).tag, 'cfg-g1-out');
+	assert.equal(legacy.tag, 'Legacy Auto');
+	assert.equal(plain(generate_outbound(nodes[2], referenceIndex)).tag, 'Auto');
 	assert.deepEqual(
 		plain(collectPlannedNodes(nodes, ['g1']).map((node) => node['.name'])),
 		['n1', 'n2', 'g1']
@@ -582,6 +591,7 @@ test('assembles an end-to-end client config with nested groups, legacy URLTest a
 	const routingNodes = [
 		{
 			'.name': 'legacy-auto',
+			label: 'Legacy Auto',
 			node: 'urltest',
 			urltest_nodes: ['n1', 'n2'],
 			urltest_url: 'https://example.com/204',
@@ -596,6 +606,9 @@ test('assembles an end-to-end client config with nested groups, legacy URLTest a
 		node_reference_index: referenceIndex,
 		routing_node_sections: {
 			'legacy-auto': routingNodes[0]
+		},
+		routing_node_tags: {
+			'legacy-auto': 'Legacy Auto'
 		}
 	};
 	const fixtureHelpers = extractUcodeFunctions(
@@ -654,8 +667,8 @@ test('assembles an end-to-end client config with nested groups, legacy URLTest a
 		}, outboundTags)
 	};
 
-	assert.equal(fixtureHelpers.get_outbound('legacy-auto', 'routing-rule'), 'cfg-legacy-auto-out');
-	assert.equal(fixtureHelpers.get_outbound('g2', 'routing-rule'), 'cfg-g2-out');
+	assert.equal(fixtureHelpers.get_outbound('legacy-auto', 'routing-rule'), 'Legacy Auto');
+	assert.equal(fixtureHelpers.get_outbound('g2', 'routing-rule'), 'Manual');
 	assert.equal(fixtureHelpers.get_outbound('any', 'dns-rule'), 'any');
 	assert.throws(
 		() => fixtureHelpers.buildExperimentalConfig({
@@ -674,11 +687,11 @@ test('assembles an end-to-end client config with nested groups, legacy URLTest a
 	assert.deepEqual(tags, [
 		'direct-out',
 		'block-out',
-		'cfg-n1-out',
-		'cfg-n2-out',
-		'cfg-g1-out',
-		'cfg-g2-out',
-		'cfg-legacy-auto-out'
+		'Hong Kong',
+		'Los Angeles',
+		'Auto',
+		'Manual',
+		'Legacy Auto'
 	]);
 	assert.deepEqual(plain(generated.outbounds.slice(0, 2)), [
 		{ type: 'direct', tag: 'direct-out', routing_mark: 100 },
@@ -689,8 +702,8 @@ test('assembles an end-to-end client config with nested groups, legacy URLTest a
 			.filter((outbound) => ['vless', 'trojan'].includes(outbound.type))
 			.map(({ type, tag, server, server_port }) => ({ type, tag, server, server_port })),
 		[
-			{ type: 'vless', tag: 'cfg-n1-out', server: '198.51.100.1', server_port: 443 },
-			{ type: 'trojan', tag: 'cfg-n2-out', server: '198.51.100.2', server_port: 443 }
+			{ type: 'vless', tag: 'Hong Kong', server: '198.51.100.1', server_port: 443 },
+			{ type: 'trojan', tag: 'Los Angeles', server: '198.51.100.2', server_port: 443 }
 		]
 	);
 	assert.deepEqual(
@@ -698,8 +711,8 @@ test('assembles an end-to-end client config with nested groups, legacy URLTest a
 		[
 			{
 				type: 'urltest',
-				tag: 'cfg-g1-out',
-				outbounds: ['cfg-n1-out', 'cfg-n2-out'],
+				tag: 'Auto',
+				outbounds: ['Hong Kong', 'Los Angeles'],
 				url: 'https://www.gstatic.com/generate_204',
 				interval: '180s',
 				tolerance: 50,
@@ -707,8 +720,8 @@ test('assembles an end-to-end client config with nested groups, legacy URLTest a
 			},
 			{
 				type: 'urltest',
-				tag: 'cfg-legacy-auto-out',
-				outbounds: ['cfg-n1-out', 'cfg-n2-out'],
+				tag: 'Legacy Auto',
+				outbounds: ['Hong Kong', 'Los Angeles'],
 				url: 'https://example.com/204',
 				interval: '180s',
 				tolerance: 50,
@@ -718,15 +731,15 @@ test('assembles an end-to-end client config with nested groups, legacy URLTest a
 	);
 	assert.deepEqual(plain(generated.outbounds.find((outbound) => outbound.type === 'selector')), {
 		type: 'selector',
-		tag: 'cfg-g2-out',
-		outbounds: ['cfg-g1-out', 'cfg-n2-out'],
-		default: 'cfg-n2-out',
+		tag: 'Manual',
+		outbounds: ['Auto', 'Los Angeles'],
+		default: 'Los Angeles',
 		interrupt_exist_connections: true
 	});
 	assert.equal(generated.dns.rules[0].clash_mode, 'global');
-	assert.equal(generated.dns.rules[0].outbound, 'cfg-g2-out');
+	assert.equal(generated.dns.rules[0].outbound, 'Manual');
 	assert.equal(generated.route.rules[0].clash_mode, 'rule');
-	assert.equal(generated.route.rules[0].outbound, 'cfg-g2-out');
+	assert.equal(generated.route.rules[0].outbound, 'Manual');
 	assert.deepEqual(plain(generated.experimental.cache_file), {
 		enabled: true,
 		path: '/var/run/homeproxy-ce/cache.db',
@@ -737,7 +750,7 @@ test('assembles an end-to-end client config with nested groups, legacy URLTest a
 		external_controller: '127.0.0.1:9090',
 		external_ui: 'dashboard',
 		external_ui_download_url: 'https://example.com/dashboard.zip',
-		external_ui_download_detour: 'cfg-legacy-auto-out',
+		external_ui_download_detour: 'Legacy Auto',
 		default_mode: 'rule'
 	});
 });

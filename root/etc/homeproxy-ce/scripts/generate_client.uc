@@ -14,7 +14,7 @@ import { cursor } from 'uci';
 
 import {
 	isEmpty, parseURL, strToBool, strToInt, strToTime,
-	removeBlankAttrs, validation, buildNodeReferenceIndex, resolveNodeReference,
+	removeBlankAttrs, validation, allocateUniqueOutboundTag, buildNodeReferenceIndex, resolveNodeReference,
 	normalizeNodeGroup, planNodeDependencies, HP_DIR, RUN_DIR
 } from 'homeproxy';
 
@@ -396,14 +396,15 @@ const tailscale_endpoint = generate_tailscale_endpoint(
 	!legacy_tailscale_listen_port
 );
 
-function outboundTag(reference) {
+function outboundTag(reference, reference_index) {
 	if (!reference || reference === 'nil')
 		return null;
 
 	if (reference === 'direct-out' || reference === 'block-out')
 		return reference;
 
-	return 'cfg-' + reference + '-out';
+	const resolved = resolveNodeReference(reference_index || node_reference_index, reference);
+	return resolved.status === 'ok' ? resolved.tag : null;
 }
 
 function formatNodeReferenceError(result) {
@@ -437,13 +438,13 @@ function collectPlannedNodes(nodes, roots) {
 	return result;
 }
 
-function generate_endpoint(node) {
+function generate_endpoint(node, reference_index) {
 	if (type(node) !== 'object' || isEmpty(node))
 		return null;
 
 	const endpoint = {
 		type: node.type,
-		tag: 'cfg-' + node['.name'] + '-out',
+		tag: outboundTag(node['.name'], reference_index),
 		address: node.wireguard_local_address,
 		mtu: strToInt(node.wireguard_mtu),
 		private_key: node.wireguard_private_key,
@@ -500,9 +501,9 @@ function generate_outbound(node, reference_index) {
 
 		return removeBlankAttrs({
 			type: node.type,
-			tag: 'cfg-' + node['.name'] + '-out',
-			outbounds: map(normalized.outbounds, (id) => outboundTag(id)),
-			default: node.type === 'selector' ? outboundTag(normalized.default) : null,
+			tag: outboundTag(node['.name'], reference_index),
+			outbounds: map(normalized.outbounds, (id) => outboundTag(id, reference_index)),
+			default: node.type === 'selector' ? outboundTag(normalized.default, reference_index) : null,
 			url: node.type === 'urltest' ? node.url : null,
 			interval: node.type === 'urltest' ? strToTime(node.interval) : null,
 			tolerance: node.type === 'urltest' ? strToInt(node.tolerance) : null,
@@ -513,7 +514,7 @@ function generate_outbound(node, reference_index) {
 
 	const outbound = {
 		type: node.type,
-		tag: 'cfg-' + node['.name'] + '-out',
+		tag: outboundTag(node['.name'], reference_index),
 		routing_mark: (node.type !== 'urltest' && node.type !== 'selector') ? strToInt(self_mark) : null,
 
 		server: node.address,
@@ -648,6 +649,8 @@ function generate_outbound(node, reference_index) {
 
 let node_sections = [],
 	routing_node_sections = {},
+	routing_node_list = [],
+	routing_node_tags = {},
 	node_reference_index;
 
 function get_outbound(cfg, section) {
@@ -676,7 +679,7 @@ function get_outbound(cfg, section) {
 		const routing_node = routing_node_sections[cfg];
 		if (routing_node) {
 			if (routing_node.node === 'urltest')
-				return 'cfg-' + cfg + '-out';
+				return routing_node_tags[cfg];
 
 			const resolved_routing_node = resolveNodeReference(node_reference_index, routing_node.node);
 			if (resolved_routing_node.status !== 'ok') {
@@ -972,9 +975,19 @@ uci.foreach(uciconfig, ucinode, (cfg) => {
 
 uci.foreach(uciconfig, uciroutingnode, (cfg) => {
 	routing_node_sections[cfg['.name']] = cfg;
+	push(routing_node_list, cfg);
 });
 
 node_reference_index = buildNodeReferenceIndex(node_sections);
+
+for (let i = 0; i < length(routing_node_list); i++) {
+	const cfg = routing_node_list[i];
+	routing_node_tags[cfg['.name']] = allocateUniqueOutboundTag(
+		node_reference_index.used_tags,
+		cfg.label || cfg['.name'],
+		cfg['.name']
+	);
+}
 
 function addNodeDependencyRoot(roots, reference, seen, section) {
 	if (isEmpty(reference))
@@ -1368,7 +1381,7 @@ for (let i = 0; i < length(planned_nodes); i++) {
 	const node = planned_nodes[i];
 	const node_id = node['.name'];
 	if (node.type === 'wireguard') {
-		const endpoint = generate_endpoint(node);
+		const endpoint = generate_endpoint(node, node_reference_index);
 		generated_endpoints[node_id] = endpoint;
 		push(config.endpoints, endpoint);
 	} else {
@@ -1383,7 +1396,7 @@ function tagGeneratedNode(node_id, tag, outbound_config) {
 	if (!generated)
 		return;
 
-	const stable_tag = outboundTag(node_id);
+	const stable_tag = outboundTag(node_id, node_reference_index);
 	let referenced = generated.type === 'selector' || generated.type === 'urltest';
 	const config_to_scan = outbound_config || config;
 	if (!isEmpty(external_ui_download_detour) &&
@@ -1427,7 +1440,7 @@ function configuredOutboundTag(reference, section) {
 function generateLegacyRoutingUrltest(cfg) {
 	return removeBlankAttrs({
 		type: 'urltest',
-		tag: 'cfg-' + cfg['.name'] + '-out',
+		tag: routing_node_tags[cfg['.name']],
 		outbounds: map(cfg.urltest_nodes || [], (k) => configuredOutboundTag(k, cfg['.name'])),
 		url: cfg.urltest_url,
 		interval: strToTime(cfg.urltest_interval),
@@ -1453,7 +1466,7 @@ function formatRoutingMetadataConflict(node_id, generated, existing, section) {
 	if (section)
 		push(sections, section);
 
-	const tag = generated ? generated.tag : outboundTag(node_id);
+	const tag = generated ? generated.tag : outboundTag(node_id, node_reference_index);
 	return `routing metadata conflict: leaf_section=${node_id} leaf_tag=${tag} routing_sections=${join(',', sections)}`;
 }
 
