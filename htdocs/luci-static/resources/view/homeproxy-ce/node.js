@@ -388,6 +388,88 @@ function parseShareLink(uri, features) {
 	return config;
 }
 
+function listNodeSections(config) {
+	let nodes = [];
+	uci.sections(config, 'node', (node) => nodes.push(node));
+	return nodes;
+}
+
+function loadNodeGroupChoices(option, config, currentId, sectionId, includeNone) {
+	delete option.keylist;
+	delete option.vallist;
+
+	if (includeNone)
+		option.value('', _('None'));
+	option.value('direct-out', _('Direct'));
+	option.value('block-out', _('Block'));
+
+	for (let choice of hp.nodeGroupChoices(listNodeSections(config), currentId))
+		option.value(choice.value, choice.label);
+
+	return option.super('load', sectionId);
+}
+
+function getNodeFormValue(option, config, sectionId, name, overrideName, overrideValue) {
+	if (name === overrideName)
+		return overrideValue;
+
+	let value = option.section.formvalue(sectionId, name);
+	return value === undefined || value === null ? uci.get(config, sectionId, name) : value;
+}
+
+function makeNodeGroupForValidation(option, config, sectionId, overrideName, overrideValue) {
+	return {
+		'.name': sectionId,
+		label: getNodeFormValue(option, config, sectionId, 'label') || sectionId,
+		type: getNodeFormValue(option, config, sectionId, 'type'),
+		outbounds: getNodeFormValue(option, config, sectionId, 'outbounds', overrideName, overrideValue),
+		default: getNodeFormValue(option, config, sectionId, 'default', overrideName, overrideValue)
+	};
+}
+
+function validateNodeGroupOption(option, config, sectionId, name, value) {
+	let group = makeNodeGroupForValidation(option, config, sectionId, name, value);
+	return hp.validateNodeGroup(listNodeSections(config), group);
+}
+
+function formatNodeGroupReferences(targetId, references) {
+	let labels = references.map((node) => `${node.label || node['.name']} (${node['.name']})`);
+	return _('Cannot remove node %s because it is referenced by group(s): %s.')
+		.format(targetId, labels.join(', '));
+}
+
+function sectionIdFromRemoveArgs(sectionId, event) {
+	if (typeof sectionId === 'string')
+		return sectionId;
+	if (typeof event === 'string')
+		return event;
+	if (sectionId?.section_id)
+		return sectionId.section_id;
+	if (sectionId?.target?.dataset?.sectionId)
+		return sectionId.target.dataset.sectionId;
+	if (event?.section_id)
+		return event.section_id;
+	if (event?.target?.dataset?.sectionId)
+		return event.target.dataset.sectionId;
+	return null;
+}
+
+function guardNodeSectionRemoval(section, config) {
+	let originalHandleRemove = section.handleRemove;
+	section.handleRemove = function(sectionId, event) {
+		sectionId = sectionIdFromRemoveArgs(sectionId, event);
+		if (sectionId) {
+			let references = hp.findNodeGroupReferences(listNodeSections(config), sectionId);
+			if (references.length) {
+				ui.addNotification(null, E('p', formatNodeGroupReferences(sectionId, references)));
+				return false;
+			}
+		}
+
+		return originalHandleRemove ? originalHandleRemove.apply(this, arguments) : undefined;
+	};
+}
+
 function renderNodeSettings(section, data, features, main_node, routing_mode) {
 	let s = section, o;
 	s.rowcolors = true;
@@ -443,16 +525,89 @@ function renderNodeSettings(section, data, features, main_node, routing_mode) {
 		o.value('wireguard', _('WireGuard'));
 	o.value('vless', _('VLESS'));
 	o.value('vmess', _('VMess'));
+	o.value('selector', _('Selector'));
+	o.value('urltest', _('URLTest'));
 	o.rmempty = false;
+
+	o = s.option(form.MultiValue, 'outbounds', _('Outbounds'),
+		_('Nodes and groups used by this outbound group.'));
+	o.multiple = true;
+	o.load = function(section_id) {
+		return loadNodeGroupChoices(this, data[0], section_id, section_id);
+	};
+	o.depends('type', 'selector');
+	o.depends('type', 'urltest');
+	o.validate = function(section_id, value) {
+		return validateNodeGroupOption(this, data[0], section_id, 'outbounds', value);
+	};
+	o.rmempty = false;
+	o.modalonly = true;
+
+	o = s.option(form.ListValue, 'default', _('Default'),
+		_('Default node or group used by a selector.'));
+	o.load = function(section_id) {
+		return loadNodeGroupChoices(this, data[0], section_id, section_id, true);
+	};
+	o.depends('type', 'selector');
+	o.validate = function(section_id, value) {
+		return validateNodeGroupOption(this, data[0], section_id, 'default', value);
+	};
+	o.modalonly = true;
+
+	o = s.option(form.Value, 'url', _('Test URL'),
+		_('The URL used to test URLTest group members.'));
+	o.placeholder = 'https://www.gstatic.com/generate_204';
+	o.depends('type', 'urltest');
+	o.validate = function(section_id, value) {
+		if (section_id && value) {
+			try {
+				let url = new URL(value);
+				if (!url.hostname)
+					return _('Expecting: %s').format(_('valid URL'));
+			} catch (e) {
+				return _('Expecting: %s').format(_('valid URL'));
+			}
+		}
+
+		return true;
+	};
+	o.modalonly = true;
+
+	o = s.option(form.Value, 'interval', _('Test interval'),
+		_('The URLTest interval in seconds.'));
+	o.datatype = 'uinteger';
+	o.placeholder = '180';
+	o.depends('type', 'urltest');
+	o.modalonly = true;
+
+	o = s.option(form.Value, 'tolerance', _('Test tolerance'),
+		_('The URLTest tolerance in milliseconds.'));
+	o.datatype = 'uinteger';
+	o.placeholder = '50';
+	o.depends('type', 'urltest');
+	o.modalonly = true;
+
+	o = s.option(form.Value, 'idle_timeout', _('Idle timeout'),
+		_('The URLTest idle timeout in seconds.'));
+	o.datatype = 'uinteger';
+	o.placeholder = '1800';
+	o.depends('type', 'urltest');
+	o.modalonly = true;
+
+	o = s.option(form.Flag, 'interrupt_exist_connections', _('Interrupt existing connections'),
+		_('Interrupt existing connections when the selected outbound changes.'));
+	o.depends('type', 'selector');
+	o.depends('type', 'urltest');
+	o.modalonly = true;
 
 	o = s.option(form.Value, 'address', _('Address'));
 	o.datatype = 'host';
-	o.depends({'type': 'direct', '!reverse': true});
+	o.depends({'type': /^(?!(direct|selector|urltest)$).+/});
 	o.rmempty = false;
 
 	o = s.option(form.Value, 'port', _('Port'));
 	o.datatype = 'port';
-	o.depends({'type': 'direct', '!reverse': true});
+	o.depends({'type': /^(?!(direct|selector|urltest)$).+/});
 	o.rmempty = false;
 
 	o = s.option(form.Value, 'username', _('Username'));
@@ -1159,13 +1314,16 @@ function renderNodeSettings(section, data, features, main_node, routing_mode) {
 
 	/* Extra settings start */
 	o = s.option(form.Flag, 'tcp_fast_open', _('TCP fast open'));
+	o.depends({'type': /^(?!(selector|urltest)$).+/});
 	o.modalonly = true;
 
 	o = s.option(form.Flag, 'tcp_multi_path', _('MultiPath TCP'));
+	o.depends({'type': /^(?!(selector|urltest)$).+/});
 	o.modalonly = true;
 
 	o = s.option(form.Flag, 'udp_fragment', _('UDP Fragment'),
 		_('Enable UDP fragmentation.'));
+	o.depends({'type': /^(?!(selector|urltest)$).+/});
 	o.modalonly = true;
 
 	o = s.option(form.Flag, 'udp_over_tcp', _('UDP over TCP'),
@@ -1181,6 +1339,8 @@ function renderNodeSettings(section, data, features, main_node, routing_mode) {
 	o.depends('udp_over_tcp', '1');
 	o.modalonly = true;
 	/* Extra settings end */
+
+	guardNodeSectionRemoval(s, data[0]);
 
 	return s;
 }
@@ -1438,11 +1598,25 @@ return view.extend({
 			}
 		}
 		o.onclick = function() {
-			let subnodes = [];
-			uci.sections(data[0], 'node', (res) => {
-				if (res.grouphash)
-					subnodes = subnodes.concat(res['.name'])
-			});
+			let nodes = listNodeSections(data[0]);
+			let subnodes = nodes.filter((node) => node.grouphash).map((node) => node['.name']);
+			let references = [];
+
+			for (let targetId of subnodes) {
+				for (let group of hp.findNodeGroupReferences(nodes, targetId)) {
+					if (!references.some((reference) =>
+						reference.targetId === targetId && reference.groupId === group['.name']))
+						references.push({ targetId, groupId: group['.name'], label: group.label });
+				}
+			}
+
+			if (references.length) {
+				let groups = references.map((reference) =>
+					`${reference.label || reference.groupId} (${reference.groupId})`);
+				ui.addNotification(null, E('p', _('Cannot remove subscription nodes referenced by group(s): %s.')
+					.format(groups.join(', '))));
+				return false;
+			}
 
 			for (let i in subnodes)
 				uci.remove(data[0], subnodes[i]);

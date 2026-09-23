@@ -12,6 +12,169 @@
 'require uci';
 'require ui';
 
+const builtinOutboundTags = {
+	'direct-out': true,
+	'block-out': true
+};
+
+function isNodeGroup(node) {
+	return node && ['selector', 'urltest'].includes(node.type);
+}
+
+function asNodeList(value) {
+	if (value === undefined || value === null || value === '')
+		return [];
+
+	return Array.isArray(value) ? value : [value];
+}
+
+function nodeDisplayName(node, id) {
+	return (node && (node.label || node['.name'])) || id;
+}
+
+function buildNodeReferenceIndex(nodes) {
+	const index = {
+		byId: Object.create(null),
+		byLabel: Object.create(null)
+	};
+
+	for (const node of nodes || []) {
+		if (!node || !node['.name'])
+			continue;
+
+		const id = node['.name'];
+		index.byId[id] = node;
+		if (node.label) {
+			if (!index.byLabel[node.label])
+				index.byLabel[node.label] = [];
+
+			index.byLabel[node.label].push(id);
+		}
+	}
+
+	return index;
+}
+
+function resolveNodeReference(index, reference) {
+	if (Object.prototype.hasOwnProperty.call(builtinOutboundTags, reference))
+		return { status: 'ok', id: reference };
+
+	if (index.byId[reference])
+		return { status: 'ok', id: reference };
+
+	const matches = index.byLabel[reference] || [];
+	if (matches.length === 1)
+		return { status: 'ok', id: matches[0] };
+
+	return matches.length > 1
+		? { status: 'ambiguous', reference, matches }
+		: { status: 'missing', reference };
+}
+
+function formatNodeReference(index, id) {
+	return `${nodeDisplayName(index.byId[id], id)} (${id})`;
+}
+
+function formatNodeGroupValidationError(error, index, rootId) {
+	const root = formatNodeReference(index, rootId);
+	const owner = formatNodeReference(index, error.ownerId || rootId);
+
+	switch (error.kind) {
+	case 'empty-group':
+		return _('Node group %s must contain at least one outbound.').format(owner);
+	case 'self-reference':
+		return _('Node group %s cannot reference itself (%s).').format(owner, error.reference);
+	case 'missing':
+		return _('Node group %s references missing node "%s".').format(owner, error.reference);
+	case 'ambiguous':
+		return _('Node group %s references ambiguous label "%s" (%s).').format(
+			owner,
+			error.reference,
+			error.matches.map((id) => formatNodeReference(index, id)).join(', ')
+		);
+	case 'invalid-default':
+		return _('Node group %s has a default outbound that is not a member (%s).').format(
+			owner,
+			error.reference
+		);
+	case 'cycle':
+		return _('Node group %s contains a cycle: %s.').format(
+			root,
+			error.path.map((id) => formatNodeReference(index, id)).join(' -> ')
+		);
+	default:
+		return _('Node group %s is invalid.').format(root);
+	}
+}
+
+function validateNodeGroupGraph(nodes, rootId) {
+	const index = buildNodeReferenceIndex(nodes);
+	const colors = Object.create(null);
+	const activePath = [];
+
+	function visit(id) {
+		const node = index.byId[id];
+		const ownerId = activePath[activePath.length - 1] || rootId;
+
+		if (!node)
+			return { kind: 'missing', ownerId, reference: id };
+
+		if (colors[id] === 1) {
+			const start = activePath.indexOf(id);
+			return {
+				kind: 'cycle',
+				path: activePath.slice(start).concat(id)
+			};
+		}
+
+		if (colors[id] === 2 || !isNodeGroup(node))
+			return null;
+
+		colors[id] = 1;
+		activePath.push(id);
+
+		const references = asNodeList(node.outbounds);
+		if (!references.length)
+			return { kind: 'empty-group', ownerId: id };
+
+		const memberIds = [];
+		for (const reference of references) {
+			const resolved = resolveNodeReference(index, reference);
+			if (resolved.status !== 'ok')
+				return { ...resolved, kind: resolved.status, ownerId: id };
+
+			if (resolved.id === id)
+				return { kind: 'self-reference', ownerId: id, reference };
+
+			if (!memberIds.includes(resolved.id))
+				memberIds.push(resolved.id);
+
+			if (!Object.prototype.hasOwnProperty.call(builtinOutboundTags, resolved.id)) {
+				const error = visit(resolved.id);
+				if (error)
+					return error;
+			}
+		}
+
+		const defaultValue = asNodeList(node.default)[0];
+		if (defaultValue !== undefined) {
+			const resolved = resolveNodeReference(index, defaultValue);
+			if (resolved.status !== 'ok')
+				return { ...resolved, kind: resolved.status, ownerId: id };
+
+			if (!memberIds.includes(resolved.id))
+				return { kind: 'invalid-default', ownerId: id, reference: defaultValue };
+		}
+
+		activePath.pop();
+		colors[id] = 2;
+		return null;
+	}
+
+	const error = visit(rootId);
+	return error ? formatNodeGroupValidationError(error, index, rootId) : true;
+}
+
 return baseclass.extend({
 	dns_strategy: {
 		'': _('Default'),
@@ -75,6 +238,27 @@ return baseclass.extend({
 		'1.2',
 		'1.3'
 	],
+
+	nodeGroupChoices(nodes, currentId) {
+		return (nodes || [])
+			.filter((node) => node['.name'] !== currentId)
+			.map((node) => ({ value: node['.name'], label: node.label || node['.name'] }));
+	},
+
+	findNodeGroupReferences(nodes, targetId) {
+		return (nodes || []).filter((node) =>
+			isNodeGroup(node) && asNodeList(node.outbounds).includes(targetId));
+	},
+
+	validateNodeGroup(nodes, group) {
+		const graph = (nodes || []).map((node) =>
+			node['.name'] === group['.name'] ? group : node);
+
+		if (!graph.some((node) => node['.name'] === group['.name']))
+			graph.push(group);
+
+		return validateNodeGroupGraph(graph, group['.name']);
+	},
 
 	CBIStaticList: form.DynamicList.extend({
 		__name__: 'CBI.StaticList',
