@@ -14,7 +14,8 @@ import { cursor } from 'uci';
 
 import {
 	isEmpty, parseURL, strToBool, strToInt, strToTime,
-	removeBlankAttrs, validation, HP_DIR, RUN_DIR
+	removeBlankAttrs, validation, buildNodeReferenceIndex, resolveNodeReference,
+	normalizeNodeGroup, planNodeDependencies, HP_DIR, RUN_DIR
 } from 'homeproxy';
 
 const ubus = connect();
@@ -395,6 +396,47 @@ const tailscale_endpoint = generate_tailscale_endpoint(
 	!legacy_tailscale_listen_port
 );
 
+function outboundTag(reference) {
+	if (!reference || reference === 'nil')
+		return null;
+
+	if (reference === 'direct-out' || reference === 'block-out')
+		return reference;
+
+	return 'cfg-' + reference + '-out';
+}
+
+function formatNodeReferenceError(result) {
+	const section = result.section || ((result.path && length(result.path)) ? result.path[0] : result.reference) || 'unknown';
+	const reference = result.reference || 'unknown';
+	const kind = result.kind || result.status || 'invalid';
+	let path = '[]';
+	if (result.path && length(result.path)) {
+		path = '';
+		for (let i = 0; i < length(result.path); i++)
+			path += (i ? ' -> ' : '') + result.path[i];
+	}
+
+	return `invalid outbound reference: section=${section} kind=${kind} reference=${reference} path=${path}`;
+}
+
+function collectPlannedNodes(nodes, roots) {
+	const reference_index = buildNodeReferenceIndex(nodes || []);
+	const planned = planNodeDependencies(reference_index, roots || []);
+	if (planned.status !== 'ok') {
+		planned.section = (planned.path && length(planned.path))
+			? planned.path[0]
+			: planned.reference;
+		die(formatNodeReferenceError(planned));
+	}
+
+	let result = [];
+	for (let i = 0; i < length(planned.order); i++)
+		push(result, reference_index.by_id[planned.order[i]]);
+
+	return result;
+}
+
 function generate_endpoint(node) {
 	if (type(node) !== 'object' || isEmpty(node))
 		return null;
@@ -428,9 +470,31 @@ function generate_endpoint(node) {
 	return endpoint;
 }
 
-function generate_outbound(node) {
+function generate_outbound(node, reference_index) {
 	if (type(node) !== 'object' || isEmpty(node))
 		return null;
+
+	if (node.type === 'selector' || node.type === 'urltest') {
+		const normalized = normalizeNodeGroup(node, reference_index);
+		if (normalized.status !== 'ok') {
+			normalized.section = node['.name'];
+			if (!normalized.path)
+				normalized.path = [node['.name']];
+			die(formatNodeReferenceError(normalized));
+		}
+
+		return removeBlankAttrs({
+			type: node.type,
+			tag: 'cfg-' + node['.name'] + '-out',
+			outbounds: map(normalized.outbounds, (id) => outboundTag(id)),
+			default: node.type === 'selector' ? outboundTag(normalized.default) : null,
+			url: node.type === 'urltest' ? node.url : null,
+			interval: node.type === 'urltest' ? strToTime(node.interval) : null,
+			tolerance: node.type === 'urltest' ? strToInt(node.tolerance) : null,
+			idle_timeout: node.type === 'urltest' ? strToTime(node.idle_timeout) : null,
+			interrupt_exist_connections: strToBool(node.interrupt_exist_connections)
+		});
+	}
 
 	const outbound = {
 		type: node.type,
@@ -576,8 +640,8 @@ function get_outbound(cfg) {
 			return 'any';
 
 		let outbounds = [];
-		for (let i in cfg)
-			push(outbounds, get_outbound(i));
+		for (let i = 0; i < length(cfg); i++)
+			push(outbounds, get_outbound(cfg[i]));
 		return outbounds;
 	} else {
 		switch (cfg) {
@@ -586,19 +650,27 @@ function get_outbound(cfg) {
 		case 'main-out':
 		case 'main-udp-out':
 			return cfg;
-		default:
-			const direct_node = uci.get_all(uciconfig, cfg) || {};
-			if (direct_node['.type'] === ucinode)
-				return direct_node.label || cfg;
-
-			const node = uci.get(uciconfig, cfg, 'node');
-			if (isEmpty(node))
-				return cfg;
-			else if (node === 'urltest')
-				return 'cfg-' + cfg + '-out';
-			else
-				return 'cfg-' + node + '-out';
 		}
+
+		const routing_node = routing_node_sections[cfg];
+		if (routing_node) {
+			if (routing_node.node === 'urltest')
+				return 'cfg-' + cfg + '-out';
+
+			const resolved_routing_node = resolveNodeReference(node_reference_index, routing_node.node);
+			if (resolved_routing_node.status !== 'ok') {
+				resolved_routing_node.section = cfg;
+				die(formatNodeReferenceError(resolved_routing_node));
+			}
+			return resolved_routing_node.tag;
+		}
+
+		const resolved_node = resolveNodeReference(node_reference_index, cfg);
+		if (resolved_node.status !== 'ok') {
+			resolved_node.section = cfg;
+			die(formatNodeReferenceError(resolved_node));
+		}
+		return resolved_node.tag;
 	}
 }
 
@@ -690,6 +762,57 @@ function filter_outbounds(outbound_tags, tags, fallback) {
 /* Config helper end */
 
 const config = {};
+
+let node_sections = [],
+	routing_node_sections = {},
+	node_reference_index;
+
+uci.foreach(uciconfig, ucinode, (cfg) => {
+	push(node_sections, cfg);
+});
+
+uci.foreach(uciconfig, uciroutingnode, (cfg) => {
+	routing_node_sections[cfg['.name']] = cfg;
+});
+
+node_reference_index = buildNodeReferenceIndex(node_sections);
+
+function addNodeDependencyRoot(roots, reference, seen, section) {
+	if (isEmpty(reference))
+		return;
+
+	if (type(reference) === 'array') {
+		for (let i = 0; i < length(reference); i++)
+			addNodeDependencyRoot(roots, reference[i], seen, section);
+		return;
+	}
+
+	if (reference === 'direct-out' || reference === 'block-out' ||
+		reference === 'main-out' || reference === 'main-udp-out')
+		return;
+
+	const routing_node = routing_node_sections[reference];
+	if (routing_node) {
+		const routing_key = 'routing:' + reference;
+		if (seen[routing_key])
+			return;
+		seen[routing_key] = true;
+
+		if (routing_node.node === 'urltest') {
+			addNodeDependencyRoot(roots, routing_node.urltest_nodes, seen, section);
+		} else {
+			addNodeDependencyRoot(roots, routing_node.node, seen, reference);
+		}
+		addNodeDependencyRoot(roots, routing_node.outbound, seen, reference);
+		return;
+	}
+
+	const node_key = 'node:' + reference;
+	if (!seen[node_key]) {
+		seen[node_key] = true;
+		push(roots, reference);
+	}
+}
 
 /* Log */
 config.log = {
@@ -1015,11 +1138,91 @@ if (legacy_route_rule_format)
 	});
 
 /* Main outbounds */
-let legacy_all_node_outbounds = false;
+let planned_roots = [],
+	planned_seen = {};
 
 if (!isEmpty(main_node)) {
-	let urltest_nodes = [];
+	if (main_node === 'urltest')
+		addNodeDependencyRoot(
+			planned_roots,
+			uci.get(uciconfig, ucimain, 'main_urltest_nodes') || [],
+			planned_seen,
+			ucimain
+		);
+	else
+		addNodeDependencyRoot(planned_roots, main_node, planned_seen, ucimain);
 
+	if (main_udp_node === 'urltest')
+		addNodeDependencyRoot(
+			planned_roots,
+			uci.get(uciconfig, ucimain, 'main_udp_urltest_nodes') || [],
+			planned_seen,
+			ucimain
+		);
+	else if (dedicated_udp_node)
+		addNodeDependencyRoot(planned_roots, main_udp_node, planned_seen, ucimain);
+} else if (!isEmpty(default_outbound)) {
+	addNodeDependencyRoot(planned_roots, default_outbound, planned_seen, uciroutingsetting);
+
+	uci.foreach(uciconfig, uciroutingnode, (cfg) => {
+		if (cfg.enabled !== '1')
+			return;
+		addNodeDependencyRoot(planned_roots, cfg['.name'], planned_seen, cfg['.name']);
+	});
+
+	uci.foreach(uciconfig, ucidnsserver, (cfg) => {
+		if (cfg.enabled === '1')
+			addNodeDependencyRoot(planned_roots, cfg.outbound, planned_seen, cfg['.name']);
+	});
+	uci.foreach(uciconfig, ucidnsrule, (cfg) => {
+		if (cfg.enabled === '1')
+			addNodeDependencyRoot(planned_roots, cfg.outbound, planned_seen, cfg['.name']);
+	});
+	uci.foreach(uciconfig, uciroutingrule, (cfg) => {
+		if (cfg.enabled === '1')
+			addNodeDependencyRoot(planned_roots, cfg.outbound, planned_seen, cfg['.name']);
+	});
+	uci.foreach(uciconfig, uciruleset, (cfg) => {
+		if (cfg.enabled === '1')
+			addNodeDependencyRoot(planned_roots, cfg.outbound, planned_seen, cfg['.name']);
+	});
+}
+
+const planned_nodes = collectPlannedNodes(node_sections, planned_roots);
+let generated_outbounds = {},
+	generated_endpoints = {};
+
+for (let i = 0; i < length(planned_nodes); i++) {
+	const node = planned_nodes[i];
+	const node_id = node['.name'];
+	if (node.type === 'wireguard') {
+		const endpoint = generate_endpoint(node);
+		generated_endpoints[node_id] = endpoint;
+		push(config.endpoints, endpoint);
+	} else {
+		const outbound = generate_outbound(node, node_reference_index);
+		generated_outbounds[node_id] = outbound;
+		push(config.outbounds, outbound);
+	}
+}
+
+function tagGeneratedNode(node_id, tag) {
+	if (generated_endpoints[node_id])
+		generated_endpoints[node_id].tag = tag;
+	else if (generated_outbounds[node_id])
+		generated_outbounds[node_id].tag = tag;
+}
+
+function configuredOutboundTag(reference, section) {
+	const tag = get_outbound(reference);
+	if (isEmpty(tag)) {
+		const result = { status: 'missing', reference, section };
+		die(formatNodeReferenceError(result));
+	}
+	return tag;
+}
+
+if (!isEmpty(main_node)) {
 	if (main_node === 'urltest') {
 		const main_urltest_nodes = uci.get(uciconfig, ucimain, 'main_urltest_nodes') || [];
 		const main_urltest_interval = uci.get(uciconfig, ucimain, 'main_urltest_interval');
@@ -1028,21 +1231,18 @@ if (!isEmpty(main_node)) {
 		push(config.outbounds, {
 			type: 'urltest',
 			tag: 'main-out',
-			outbounds: map(main_urltest_nodes, (k) => `cfg-${k}-out`),
+			outbounds: map(main_urltest_nodes, (k) => configuredOutboundTag(k, ucimain)),
 			interval: strToTime(main_urltest_interval),
 			tolerance: strToInt(main_urltest_tolerance),
 			idle_timeout: (strToInt(main_urltest_interval) > 1800) ? `${main_urltest_interval * 2}s` : null,
 		});
-		urltest_nodes = main_urltest_nodes;
 	} else {
-		const main_node_cfg = uci.get_all(uciconfig, main_node) || {};
-		if (main_node_cfg.type === 'wireguard') {
-			push(config.endpoints, generate_endpoint(main_node_cfg));
-			config.endpoints[length(config.endpoints)-1].tag = 'main-out';
-		} else {
-			push(config.outbounds, generate_outbound(main_node_cfg));
-			config.outbounds[length(config.outbounds)-1].tag = 'main-out';
+		const main_node_result = resolveNodeReference(node_reference_index, main_node);
+		if (main_node_result.status !== 'ok') {
+			main_node_result.section = ucimain;
+			die(formatNodeReferenceError(main_node_result));
 		}
+		tagGeneratedNode(main_node_result.id, 'main-out');
 	}
 
 	if (main_udp_node === 'urltest') {
@@ -1053,118 +1253,60 @@ if (!isEmpty(main_node)) {
 		push(config.outbounds, {
 			type: 'urltest',
 			tag: 'main-udp-out',
-			outbounds: map(main_udp_urltest_nodes, (k) => `cfg-${k}-out`),
+			outbounds: map(main_udp_urltest_nodes, (k) => configuredOutboundTag(k, ucimain)),
 			interval: strToTime(main_udp_urltest_interval),
 			tolerance: strToInt(main_udp_urltest_tolerance),
 			idle_timeout: (strToInt(main_udp_urltest_interval) > 1800) ? `${main_udp_urltest_interval * 2}s` : null,
 		});
-		urltest_nodes = [...urltest_nodes, ...filter(main_udp_urltest_nodes, (l) => !~index(urltest_nodes, l))];
 	} else if (dedicated_udp_node) {
-		const main_udp_node_cfg = uci.get_all(uciconfig, main_udp_node) || {};
-		if (main_udp_node_cfg.type === 'wireguard') {
-			push(config.endpoints, generate_endpoint(main_udp_node_cfg));
-			config.endpoints[length(config.endpoints)-1].tag = 'main-udp-out';
-		} else {
-			push(config.outbounds, generate_outbound(main_udp_node_cfg));
-			config.outbounds[length(config.outbounds)-1].tag = 'main-udp-out';
+		const main_udp_node_result = resolveNodeReference(node_reference_index, main_udp_node);
+		if (main_udp_node_result.status !== 'ok') {
+			main_udp_node_result.section = ucimain;
+			die(formatNodeReferenceError(main_udp_node_result));
 		}
-	}
-
-	for (let i in urltest_nodes) {
-		const urltest_node = uci.get_all(uciconfig, i) || {};
-		if (urltest_node.type === 'wireguard') {
-			push(config.endpoints, generate_endpoint(urltest_node));
-			config.endpoints[length(config.endpoints)-1].tag = 'cfg-' + i + '-out';
-		} else {
-			push(config.outbounds, generate_outbound(urltest_node));
-			config.outbounds[length(config.outbounds)-1].tag = 'cfg-' + i + '-out';
-		}
+		tagGeneratedNode(main_udp_node_result.id, 'main-udp-out');
 	}
 } else if (!isEmpty(default_outbound)) {
-	let urltest_nodes = [],
-	    routing_nodes = [],
-	    has_routing_nodes = false;
-
 	uci.foreach(uciconfig, uciroutingnode, (cfg) => {
 		if (cfg.enabled !== '1')
 			return;
 
-		has_routing_nodes = true;
-
 		if (cfg.node === 'urltest') {
-			push(config.outbounds, {
+			push(config.outbounds, removeBlankAttrs({
 				type: 'urltest',
 				tag: 'cfg-' + cfg['.name'] + '-out',
-				outbounds: map(cfg.urltest_nodes, (k) => `cfg-${k}-out`),
+				outbounds: map(cfg.urltest_nodes || [], (k) => configuredOutboundTag(k, cfg['.name'])),
 				url: cfg.urltest_url,
 				interval: strToTime(cfg.urltest_interval),
 				tolerance: strToInt(cfg.urltest_tolerance),
 				idle_timeout: strToTime(cfg.urltest_idle_timeout),
 				interrupt_exist_connections: strToBool(cfg.urltest_interrupt_exist_connections)
-			});
-			urltest_nodes = [...urltest_nodes, ...filter(cfg.urltest_nodes, (l) => !~index(urltest_nodes, l))];
-		} else {
-			const outbound = uci.get_all(uciconfig, cfg.node) || {};
-			if (outbound.type === 'wireguard') {
-				push(config.endpoints, generate_endpoint(outbound));
-				config.endpoints[length(config.endpoints)-1].bind_interface = cfg.bind_interface;
-				config.endpoints[length(config.endpoints)-1].detour = get_outbound(cfg.outbound);
-				if (cfg.domain_resolver)
-					config.endpoints[length(config.endpoints)-1].domain_resolver = {
-						server: get_resolver(cfg.domain_resolver, 'endpoint domain resolver'),
-						strategy: cfg.domain_strategy
-					};
-			} else {
-				push(config.outbounds, generate_outbound(outbound));
-				config.outbounds[length(config.outbounds)-1].bind_interface = cfg.bind_interface;
-				config.outbounds[length(config.outbounds)-1].detour = get_outbound(cfg.outbound);
-				if (cfg.domain_resolver)
-					config.outbounds[length(config.outbounds)-1].domain_resolver = {
-						server: get_resolver(cfg.domain_resolver, 'outbound domain resolver'),
-						strategy: cfg.domain_strategy
-					};
-			}
-			push(routing_nodes, cfg.node);
+			}));
+			return;
 		}
+
+		const node_result = resolveNodeReference(node_reference_index, cfg.node);
+		if (node_result.status !== 'ok') {
+			node_result.section = cfg['.name'];
+			die(formatNodeReferenceError(node_result));
+		}
+
+		const generated = generated_endpoints[node_result.id] || generated_outbounds[node_result.id];
+		if (!generated)
+			return;
+
+		/* Selector/URLTest groups only expose their group fields. */
+		if (generated.type in ['selector', 'urltest'])
+			return;
+
+		generated.bind_interface = cfg.bind_interface;
+		generated.detour = get_outbound(cfg.outbound);
+		if (cfg.domain_resolver)
+			generated.domain_resolver = {
+				server: get_resolver(cfg.domain_resolver),
+				strategy: cfg.domain_strategy
+			};
 	});
-
-	if (has_routing_nodes) {
-		for (let i in filter(urltest_nodes, (l) => !~index(routing_nodes, l))) {
-			const urltest_node = uci.get_all(uciconfig, i) || {};
-			if (urltest_node.type === 'wireguard')
-				push(config.endpoints, generate_endpoint(urltest_node));
-			else
-				push(config.outbounds, generate_outbound(urltest_node));
-		}
-	} else {
-		legacy_all_node_outbounds = true;
-
-		uci.foreach(uciconfig, ucinode, (cfg) => {
-			if (cfg.type === 'wireguard') {
-				push(config.endpoints, generate_endpoint(cfg));
-				config.endpoints[length(config.endpoints)-1].tag = cfg.label || config.endpoints[length(config.endpoints)-1].tag;
-				if (cfg.domain_resolver)
-					config.endpoints[length(config.endpoints)-1].domain_resolver = {
-						server: get_resolver(cfg.domain_resolver, 'endpoint domain resolver'),
-						strategy: cfg.domain_strategy
-					};
-				config.endpoints[length(config.endpoints)-1].domain_strategy = cfg.domain_strategy;
-				config.endpoints[length(config.endpoints)-1].bind_interface = cfg.bind_interface;
-				config.endpoints[length(config.endpoints)-1].detour = cfg.outbound;
-			} else {
-				push(config.outbounds, generate_outbound(cfg));
-				config.outbounds[length(config.outbounds)-1].tag = cfg.label || config.outbounds[length(config.outbounds)-1].tag;
-				if (cfg.domain_resolver)
-					config.outbounds[length(config.outbounds)-1].domain_resolver = {
-						server: get_resolver(cfg.domain_resolver, 'outbound domain resolver'),
-						strategy: cfg.domain_strategy
-					};
-				config.outbounds[length(config.outbounds)-1].domain_strategy = cfg.domain_strategy;
-				config.outbounds[length(config.outbounds)-1].bind_interface = cfg.bind_interface;
-				config.outbounds[length(config.outbounds)-1].detour = cfg.outbound;
-			}
-		});
-	}
 }
 
 if (isEmpty(config.endpoints))
@@ -1177,7 +1319,7 @@ for (let endpoint in config.endpoints || [])
 	outbound_tags[endpoint.tag] = true;
 
 	for (let outbound in config.outbounds) {
-		if ((outbound.type in ['selector', 'urltest']) && !legacy_all_node_outbounds)
+		if (outbound.type in ['selector', 'urltest'])
 			outbound.outbounds = filter_outbounds(outbound_tags, outbound.outbounds);
 
 		if (legacy_dns_server_format) {

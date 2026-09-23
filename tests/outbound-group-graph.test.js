@@ -142,6 +142,26 @@ test('plans dependencies with members before their containing groups', () => {
 	});
 });
 
+test('keeps built-in outbound tags in groups without planning them as nodes', () => {
+	const builtInGroup = {
+		'.name': 'builtins',
+		label: 'Built-ins',
+		type: 'selector',
+		outbounds: ['direct-out', 'n1', 'block-out']
+	};
+	const index = buildNodeReferenceIndex([...nodes, builtInGroup]);
+
+	assert.deepEqual(plain(normalizeNodeGroup(builtInGroup, index)), {
+		status: 'ok',
+		outbounds: ['direct-out', 'n1', 'block-out'],
+		default: null
+	});
+	assert.deepEqual(plain(planNodeDependencies(index, ['builtins'])), {
+		status: 'ok',
+		order: ['n1', 'builtins']
+	});
+});
+
 test('returns a path when groups form a dependency cycle', () => {
 	const cycleNodes = [
 		{ '.name': 'g1', label: 'One', type: 'urltest', outbounds: ['g2'] },
