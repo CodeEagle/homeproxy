@@ -440,7 +440,8 @@ test('assembles an end-to-end client config with nested groups, legacy URLTest a
 			'buildDnsRule',
 			'buildRouteRule',
 			'generateLegacyRoutingUrltest',
-			'buildExperimentalConfig'
+			'buildExperimentalConfig',
+			'buildDefaultOutbounds'
 		],
 		{
 			...uciRuntime,
@@ -452,18 +453,16 @@ test('assembles an end-to-end client config with nested groups, legacy URLTest a
 	const legacyOutbounds = routingNodes.map((routingNode) =>
 		fixtureHelpers.generateLegacyRoutingUrltest(routingNode)
 	);
+	const clientOutbounds = [
+		...fixtureHelpers.buildDefaultOutbounds('100'),
+		...generatedOutbounds,
+		...legacyOutbounds
+	];
 	const outboundTags = Object.fromEntries(
-		[...generatedOutbounds, ...legacyOutbounds,
-			{ tag: 'direct-out' }, { tag: 'block-out' }]
-			.map((outbound) => [outbound.tag, true])
+		clientOutbounds.map((outbound) => [outbound.tag, true])
 	);
 	const generated = {
-		outbounds: [
-			{ type: 'direct', tag: 'direct-out' },
-			{ type: 'block', tag: 'block-out' },
-			...generatedOutbounds,
-			...legacyOutbounds
-		],
+		outbounds: clientOutbounds,
 		dns: {
 			rules: [fixtureHelpers.buildDnsRule({ clash_mode: 'global', outbound: 'g2' })]
 		},
@@ -507,6 +506,10 @@ test('assembles an end-to-end client config with nested groups, legacy URLTest a
 		'cfg-g1-out',
 		'cfg-g2-out',
 		'cfg-legacy-auto-out'
+	]);
+	assert.deepEqual(plain(generated.outbounds.slice(0, 2)), [
+		{ type: 'direct', tag: 'direct-out', routing_mark: 100 },
+		{ type: 'block', tag: 'block-out' }
 	]);
 	assert.deepEqual(
 		generated.outbounds

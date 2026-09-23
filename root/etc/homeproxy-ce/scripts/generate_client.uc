@@ -470,6 +470,27 @@ function generate_endpoint(node) {
 	return endpoint;
 }
 
+function buildDefaultOutbounds(mark) {
+	let outbounds = [
+		{
+			type: 'direct',
+			tag: 'direct-out',
+			routing_mark: strToInt(mark)
+		},
+		{
+			type: 'block',
+			tag: 'block-out'
+		}
+	];
+	if (legacy_route_rule_format)
+		push(outbounds, {
+			type: 'dns',
+			tag: 'dns-out'
+		});
+
+	return outbounds;
+}
+
 function generate_outbound(node, reference_index) {
 	if (type(node) !== 'object' || isEmpty(node))
 		return null;
@@ -1278,22 +1299,7 @@ if (tailscale_endpoint)
 	push(config.endpoints, tailscale_endpoint);
 
 /* Default outbounds */
-config.outbounds = [
-	{
-		type: 'direct',
-		tag: 'direct-out',
-		routing_mark: strToInt(self_mark)
-	},
-	{
-		type: 'block',
-		tag: 'block-out'
-	}
-];
-if (legacy_route_rule_format)
-	push(config.outbounds, {
-		type: 'dns',
-		tag: 'dns-out'
-	});
+config.outbounds = buildDefaultOutbounds(self_mark);
 
 /* Main outbounds */
 let planned_inputs = {
