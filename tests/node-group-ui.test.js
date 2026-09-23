@@ -40,6 +40,11 @@ test('certificate validation accepts the HomeProxy CE certificate directory', ()
 	assert.match(hp.validateCertificatePath('rx78_node', '/tmp/client.pem'), /Expecting/);
 });
 
+test('nodeGroupMultiValue expands the space-joined value emitted by LuCI dropdown validation', () => {
+	assert.deepEqual(plain(hp.nodeGroupMultiValue('n1 n2 direct-out')), ['n1', 'n2', 'direct-out']);
+	assert.deepEqual(plain(hp.nodeGroupMultiValue(['n1', 'n2'])), ['n1', 'n2']);
+});
+
 test('nodeGroupChoices uses section IDs as values and labels for display', () => {
 	assert.deepEqual(plain(hp.nodeGroupChoices(nodes, 'g1')), [
 		{ value: 'n1', label: '香港' },

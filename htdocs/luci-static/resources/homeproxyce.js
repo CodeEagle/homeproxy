@@ -198,6 +198,15 @@ return baseclass.extend({
 		return `cbid.${config}.${sectionId}.${option}`;
 	},
 
+	nodeGroupMultiValue(value) {
+		if (Array.isArray(value))
+			return value;
+		if (typeof value === 'string')
+			return value.trim() ? value.trim().split(/\s+/) : [];
+
+		return asNodeList(value);
+	},
+
 	dns_strategy: {
 		'': _('Default'),
 		'prefer_ipv4': _('Prefer IPv4'),

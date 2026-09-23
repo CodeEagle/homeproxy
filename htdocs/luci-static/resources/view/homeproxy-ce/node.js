@@ -428,6 +428,9 @@ function makeNodeGroupForValidation(option, config, sectionId, overrideName, ove
 }
 
 function validateNodeGroupOption(option, config, sectionId, name, value) {
+	if (name === 'outbounds')
+		value = hp.nodeGroupMultiValue(value);
+
 	let group = makeNodeGroupForValidation(option, config, sectionId, name, value);
 	return hp.validateNodeGroup(listNodeSections(config), group);
 }
