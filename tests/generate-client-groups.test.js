@@ -201,3 +201,140 @@ test('formats structured reference diagnostics without losing the active path', 
 	assert.match(message, /reference=.*g1/);
 	assert.match(message, /path=.*g1.*g2.*g1/);
 });
+
+test('normalizes generated groups strictly and preserves their field whitelist', () => {
+	const { normalizeGeneratedOutbound } = extractUcodeFunctions(
+		source,
+		['strictOutboundTag', 'strictFilterOutbounds', 'normalizeGeneratedOutbound'],
+		{
+			...context,
+			legacy_dns_server_format: false,
+			has_outbound: (tags, tag) => !!(tag && tags[tag]),
+			normalize_outbound: (tags, tag) => tags[tag] ? tag : 'direct-out',
+			filter_outbounds: (tags, tagsToFilter) => tagsToFilter.filter((tag) => tags[tag]),
+			formatNodeReferenceError: (result) =>
+				`invalid outbound reference: section=${result.section} reference=${result.reference} path=${result.path}`
+		}
+	);
+
+	const selector = {
+		type: 'selector',
+		tag: 'cfg-g2-out',
+		outbounds: ['cfg-n1-out'],
+		default: 'cfg-n1-out',
+		detour: 'direct-out'
+	};
+	assert.deepEqual(
+		plain(normalizeGeneratedOutbound(selector, { 'cfg-n1-out': true, 'direct-out': true })),
+		{
+			type: 'selector',
+			tag: 'cfg-g2-out',
+			outbounds: ['cfg-n1-out'],
+			default: 'cfg-n1-out'
+		}
+	);
+
+	assert.throws(
+		() => normalizeGeneratedOutbound(
+			{ type: 'urltest', tag: 'cfg-g1-out', outbounds: ['cfg-gone-out'] },
+			{ 'direct-out': true }
+		),
+		/reference=cfg-gone-out.*path/
+	);
+});
+
+test('keeps a stable cfg tag when main-out is added for a referenced node', () => {
+	const runtime = {
+		generated_outbounds: {
+			n1: { type: 'vless', tag: 'cfg-n1-out' }
+		},
+		generated_endpoints: {},
+		config: {
+			outbounds: [
+				{ type: 'selector', tag: 'cfg-g1-out', outbounds: ['cfg-n1-out'] }
+			],
+			endpoints: []
+		},
+		outboundTag: (id) => `cfg-${id}-out`,
+		push: (array, value) => array.push(value),
+		length: (value) => value.length,
+		isEmpty: (value) => !value || value === 'nil',
+		external_ui_download_detour: null
+	};
+	const { tagGeneratedNode } = extractUcodeFunctions(source, ['tagGeneratedNode'], runtime);
+
+	assert.doesNotThrow(() => tagGeneratedNode('n1', 'main-out', runtime.config));
+	assert.equal(runtime.generated_outbounds.n1.tag, 'cfg-n1-out');
+	assert.equal(runtime.config.outbounds.length, 2);
+	assert.equal(runtime.config.outbounds[1].tag, 'main-out');
+});
+
+test('includes external UI detour in planned dependency roots', () => {
+	const { collectClientDependencyRoots } = extractUcodeFunctions(
+		source,
+		['collectClientDependencyRoots'],
+		{
+			isEmpty: (value) => !value || value === 'nil' ||
+				(Array.isArray(value) || (value && typeof value === 'object')) && value.length === 0,
+			addNodeDependencyRoot: (roots, reference) => roots.push(reference)
+		}
+	);
+
+	assert.deepEqual(
+		plain(collectClientDependencyRoots({ main: [], custom: [], externalUiDetour: 'g1' })),
+		['g1']
+	);
+});
+
+test('preserves routing metadata by applying it to group leaves, not the group object', () => {
+	const runtime = {
+		...context,
+		node_reference_index: referenceIndex,
+		generated_outbounds: {
+			n1: { type: 'vless', tag: 'cfg-n1-out' },
+			g1: generate_outbound(nodes[2], referenceIndex)
+		},
+		generated_endpoints: {},
+		get_outbound: (reference) => reference === 'direct-out' ? reference : `cfg-${reference}-out`,
+		get_resolver: (reference) => `cfg-${reference}-dns`,
+		config: { outbounds: [], endpoints: [] }
+	};
+	const { applyRoutingNodeMetadata } = extractUcodeFunctions(
+		source,
+		['applyRoutingNodeMetadata'],
+		runtime
+	);
+	assert.doesNotThrow(() => applyRoutingNodeMetadata('g1', {
+		'.name': 'r1',
+		bind_interface: 'wan',
+		outbound: 'direct-out',
+		domain_resolver: 'default-dns',
+		domain_strategy: 'prefer_ipv4'
+	}, {}));
+	assert.equal(runtime.generated_outbounds.n1.bind_interface, 'wan');
+	assert.equal(runtime.generated_outbounds.n1.detour, 'direct-out');
+	assert.deepEqual(plain(runtime.generated_outbounds.n1.domain_resolver), {
+		server: 'cfg-default-dns-dns',
+		strategy: 'prefer_ipv4'
+	});
+	assert.equal(Object.hasOwn(runtime.generated_outbounds.g1, 'bind_interface'), false);
+	assert.equal(Object.hasOwn(runtime.generated_outbounds.g1, 'detour'), false);
+});
+
+test('keeps the caller section when resolving an explicit detour fails', () => {
+	const { configuredOutboundTag } = extractUcodeFunctions(source, ['configuredOutboundTag'], {
+		isEmpty: (value) => !value,
+		get_outbound: (reference, section) => {
+			throw new Error(`section=${section} reference=${reference} path=[]`);
+		},
+		formatNodeReferenceError: () => 'unused',
+		die: (message) => {
+			throw new Error(message);
+		}
+	});
+
+	assert.throws(
+		() => configuredOutboundTag('gone', 'external_ui_download_detour'),
+		/section=external_ui_download_detour.*reference=gone/
+	);
+});

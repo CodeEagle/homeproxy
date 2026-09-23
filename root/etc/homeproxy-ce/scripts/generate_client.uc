@@ -631,7 +631,7 @@ function generate_outbound(node, reference_index) {
 	return outbound;
 }
 
-function get_outbound(cfg) {
+function get_outbound(cfg, section) {
 	if (isEmpty(cfg))
 		return null;
 
@@ -641,7 +641,7 @@ function get_outbound(cfg) {
 
 		let outbounds = [];
 		for (let i = 0; i < length(cfg); i++)
-			push(outbounds, get_outbound(cfg[i]));
+			push(outbounds, get_outbound(cfg[i], section));
 		return outbounds;
 	} else {
 		switch (cfg) {
@@ -659,7 +659,7 @@ function get_outbound(cfg) {
 
 			const resolved_routing_node = resolveNodeReference(node_reference_index, routing_node.node);
 			if (resolved_routing_node.status !== 'ok') {
-				resolved_routing_node.section = cfg;
+				resolved_routing_node.section = section || cfg;
 				die(formatNodeReferenceError(resolved_routing_node));
 			}
 			return resolved_routing_node.tag;
@@ -667,7 +667,7 @@ function get_outbound(cfg) {
 
 		const resolved_node = resolveNodeReference(node_reference_index, cfg);
 		if (resolved_node.status !== 'ok') {
-			resolved_node.section = cfg;
+			resolved_node.section = section || cfg;
 			die(formatNodeReferenceError(resolved_node));
 		}
 		return resolved_node.tag;
@@ -759,6 +759,67 @@ function filter_outbounds(outbound_tags, tags, fallback) {
 
 	return isEmpty(filtered) ? null : filtered;
 }
+
+function strictOutboundTag(outbound_tags, tag, section) {
+	if (isEmpty(tag))
+		return null;
+
+	if (has_outbound(outbound_tags, tag))
+		return tag;
+
+	const result = {
+		status: 'missing',
+		reference: tag,
+		section,
+		path: [section]
+	};
+	die(formatNodeReferenceError(result));
+	return null;
+}
+
+function strictFilterOutbounds(outbound_tags, tags, section) {
+	let filtered = [];
+	for (let i = 0; i < length(tags || []); i++) {
+		const tag = strictOutboundTag(outbound_tags, tags[i], section);
+		let duplicate = false;
+		for (let j = 0; j < length(filtered); j++) {
+			if (filtered[j] === tag) {
+				duplicate = true;
+				break;
+			}
+		}
+		if (!duplicate)
+			push(filtered, tag);
+	}
+	return filtered;
+}
+
+function normalizeGeneratedOutbound(outbound, outbound_tags) {
+	if (outbound.type === 'selector' || outbound.type === 'urltest') {
+		const normalized = {
+			type: outbound.type,
+			tag: outbound.tag,
+			outbounds: strictFilterOutbounds(outbound_tags, outbound.outbounds, outbound.tag),
+			default: outbound.type === 'selector' && !isEmpty(outbound.default)
+				? strictOutboundTag(outbound_tags, outbound.default, outbound.tag)
+				: null,
+			url: outbound.type === 'urltest' ? outbound.url : null,
+			interval: outbound.type === 'urltest' ? outbound.interval : null,
+			tolerance: outbound.type === 'urltest' ? outbound.tolerance : null,
+			idle_timeout: outbound.type === 'urltest' ? outbound.idle_timeout : null,
+			interrupt_exist_connections: outbound.interrupt_exist_connections
+		};
+
+		return removeBlankAttrs(normalized);
+	}
+
+	if (legacy_dns_server_format)
+		delete outbound.default;
+	else
+		outbound.default = normalize_optional_outbound(outbound_tags, outbound.default);
+	outbound.detour = normalize_optional_outbound(outbound_tags, outbound.detour);
+	return outbound;
+}
 /* Config helper end */
 
 const config = {};
@@ -812,6 +873,20 @@ function addNodeDependencyRoot(roots, reference, seen, section) {
 		seen[node_key] = true;
 		push(roots, reference);
 	}
+}
+
+function collectClientDependencyRoots(settings) {
+	let roots = [],
+		seen = {};
+
+	if (!isEmpty(settings.main))
+		addNodeDependencyRoot(roots, settings.main, seen, 'main');
+	if (!isEmpty(settings.custom))
+		addNodeDependencyRoot(roots, settings.custom, seen, 'custom');
+	if (!isEmpty(settings.externalUiDetour))
+		addNodeDependencyRoot(roots, settings.externalUiDetour, seen, 'external_ui_download_detour');
+
+	return roots;
 }
 
 /* Log */
@@ -1138,56 +1213,61 @@ if (legacy_route_rule_format)
 	});
 
 /* Main outbounds */
-let planned_roots = [],
+let planned_inputs = {
+	main: [],
+	custom: [],
+	externalUiDetour: external_ui_download_detour
+},
 	planned_seen = {};
 
 if (!isEmpty(main_node)) {
 	if (main_node === 'urltest')
 		addNodeDependencyRoot(
-			planned_roots,
+			planned_inputs.main,
 			uci.get(uciconfig, ucimain, 'main_urltest_nodes') || [],
 			planned_seen,
 			ucimain
 		);
 	else
-		addNodeDependencyRoot(planned_roots, main_node, planned_seen, ucimain);
+		addNodeDependencyRoot(planned_inputs.main, main_node, planned_seen, ucimain);
 
 	if (main_udp_node === 'urltest')
 		addNodeDependencyRoot(
-			planned_roots,
+			planned_inputs.main,
 			uci.get(uciconfig, ucimain, 'main_udp_urltest_nodes') || [],
 			planned_seen,
 			ucimain
 		);
 	else if (dedicated_udp_node)
-		addNodeDependencyRoot(planned_roots, main_udp_node, planned_seen, ucimain);
+		addNodeDependencyRoot(planned_inputs.main, main_udp_node, planned_seen, ucimain);
 } else if (!isEmpty(default_outbound)) {
-	addNodeDependencyRoot(planned_roots, default_outbound, planned_seen, uciroutingsetting);
+	addNodeDependencyRoot(planned_inputs.custom, default_outbound, planned_seen, uciroutingsetting);
 
 	uci.foreach(uciconfig, uciroutingnode, (cfg) => {
 		if (cfg.enabled !== '1')
 			return;
-		addNodeDependencyRoot(planned_roots, cfg['.name'], planned_seen, cfg['.name']);
+		addNodeDependencyRoot(planned_inputs.custom, cfg['.name'], planned_seen, cfg['.name']);
 	});
 
 	uci.foreach(uciconfig, ucidnsserver, (cfg) => {
 		if (cfg.enabled === '1')
-			addNodeDependencyRoot(planned_roots, cfg.outbound, planned_seen, cfg['.name']);
+			addNodeDependencyRoot(planned_inputs.custom, cfg.outbound, planned_seen, cfg['.name']);
 	});
 	uci.foreach(uciconfig, ucidnsrule, (cfg) => {
 		if (cfg.enabled === '1')
-			addNodeDependencyRoot(planned_roots, cfg.outbound, planned_seen, cfg['.name']);
+			addNodeDependencyRoot(planned_inputs.custom, cfg.outbound, planned_seen, cfg['.name']);
 	});
 	uci.foreach(uciconfig, uciroutingrule, (cfg) => {
 		if (cfg.enabled === '1')
-			addNodeDependencyRoot(planned_roots, cfg.outbound, planned_seen, cfg['.name']);
+			addNodeDependencyRoot(planned_inputs.custom, cfg.outbound, planned_seen, cfg['.name']);
 	});
 	uci.foreach(uciconfig, uciruleset, (cfg) => {
 		if (cfg.enabled === '1')
-			addNodeDependencyRoot(planned_roots, cfg.outbound, planned_seen, cfg['.name']);
+			addNodeDependencyRoot(planned_inputs.custom, cfg.outbound, planned_seen, cfg['.name']);
 	});
 }
 
+const planned_roots = collectClientDependencyRoots(planned_inputs);
 const planned_nodes = collectPlannedNodes(node_sections, planned_roots);
 let generated_outbounds = {},
 	generated_endpoints = {};
@@ -1206,20 +1286,98 @@ for (let i = 0; i < length(planned_nodes); i++) {
 	}
 }
 
-function tagGeneratedNode(node_id, tag) {
+function tagGeneratedNode(node_id, tag, outbound_config) {
+	const generated = generated_endpoints[node_id] || generated_outbounds[node_id];
+	if (!generated)
+		return;
+
+	const stable_tag = outboundTag(node_id);
+	let referenced = generated.type === 'selector' || generated.type === 'urltest';
+	const config_to_scan = outbound_config || config;
+	if (!isEmpty(external_ui_download_detour) &&
+		get_outbound(external_ui_download_detour, 'external_ui_download_detour') === stable_tag)
+		referenced = true;
+	for (let i = 0; i < length(config_to_scan.outbounds || []); i++) {
+		const outbound = config_to_scan.outbounds[i];
+		if (outbound.type !== 'selector' && outbound.type !== 'urltest')
+			continue;
+		for (let j = 0; j < length(outbound.outbounds || []); j++) {
+			if (outbound.outbounds[j] === stable_tag) {
+				referenced = true;
+				break;
+			}
+		}
+		if (referenced)
+			break;
+	}
+
+	if (!referenced) {
+		generated.tag = tag;
+		return;
+	}
+
+	const alias = { ...generated, tag };
 	if (generated_endpoints[node_id])
-		generated_endpoints[node_id].tag = tag;
-	else if (generated_outbounds[node_id])
-		generated_outbounds[node_id].tag = tag;
+		push(config_to_scan.endpoints, alias);
+	else
+		push(config_to_scan.outbounds, alias);
 }
 
 function configuredOutboundTag(reference, section) {
-	const tag = get_outbound(reference);
+	const tag = get_outbound(reference, section);
 	if (isEmpty(tag)) {
 		const result = { status: 'missing', reference, section };
 		die(formatNodeReferenceError(result));
 	}
 	return tag;
+}
+
+function applyRoutingNodeMetadata(node_id, cfg, visited) {
+	if (!visited)
+		visited = {};
+	if (visited[node_id])
+		return;
+	visited[node_id] = true;
+
+	const node = node_reference_index.by_id[node_id];
+	if (!node) {
+		const result = {
+			status: 'missing',
+			reference: node_id,
+			section: cfg['.name'],
+			path: [cfg['.name']]
+		};
+		die(formatNodeReferenceError(result));
+		return;
+	}
+
+	if (node.type === 'selector' || node.type === 'urltest') {
+		const normalized = normalizeNodeGroup(node, node_reference_index);
+		if (normalized.status !== 'ok') {
+			normalized.section = cfg['.name'];
+			normalized.path = [cfg['.name'], node_id];
+			die(formatNodeReferenceError(normalized));
+		}
+
+		for (let i = 0; i < length(normalized.outbounds); i++) {
+			const member = normalized.outbounds[i];
+			if (member !== 'direct-out' && member !== 'block-out')
+				applyRoutingNodeMetadata(member, cfg, visited);
+		}
+		return;
+	}
+
+	const generated = generated_endpoints[node_id] || generated_outbounds[node_id];
+	if (!generated)
+		return;
+
+	generated.bind_interface = cfg.bind_interface;
+	generated.detour = get_outbound(cfg.outbound, cfg['.name']);
+	if (cfg.domain_resolver)
+		generated.domain_resolver = {
+			server: get_resolver(cfg.domain_resolver),
+			strategy: cfg.domain_strategy
+		};
 }
 
 if (!isEmpty(main_node)) {
@@ -1291,21 +1449,7 @@ if (!isEmpty(main_node)) {
 			die(formatNodeReferenceError(node_result));
 		}
 
-		const generated = generated_endpoints[node_result.id] || generated_outbounds[node_result.id];
-		if (!generated)
-			return;
-
-		/* Selector/URLTest groups only expose their group fields. */
-		if (generated.type in ['selector', 'urltest'])
-			return;
-
-		generated.bind_interface = cfg.bind_interface;
-		generated.detour = get_outbound(cfg.outbound);
-		if (cfg.domain_resolver)
-			generated.domain_resolver = {
-				server: get_resolver(cfg.domain_resolver),
-				strategy: cfg.domain_strategy
-			};
+		applyRoutingNodeMetadata(node_result.id, cfg, {});
 	});
 }
 
@@ -1318,19 +1462,8 @@ for (let outbound in config.outbounds)
 for (let endpoint in config.endpoints || [])
 	outbound_tags[endpoint.tag] = true;
 
-	for (let outbound in config.outbounds) {
-		if (outbound.type in ['selector', 'urltest'])
-			outbound.outbounds = filter_outbounds(outbound_tags, outbound.outbounds);
-
-		if (legacy_dns_server_format) {
-			if (outbound.type in ['selector', 'urltest'])
-				outbound.default = normalize_optional_outbound(outbound_tags, outbound.default);
-			else
-				delete outbound.default;
-		} else
-			outbound.default = normalize_optional_outbound(outbound_tags, outbound.default);
-		outbound.detour = normalize_optional_outbound(outbound_tags, outbound.detour);
-	}
+	for (let i = 0; i < length(config.outbounds); i++)
+		config.outbounds[i] = normalizeGeneratedOutbound(config.outbounds[i], outbound_tags);
 
 for (let endpoint in config.endpoints || [])
 	endpoint.detour = normalize_optional_outbound(outbound_tags, endpoint.detour);
@@ -1542,7 +1675,10 @@ if (routing_mode in ['bypass_mainland_china', 'custom']) {
 			external_controller: (enable_clash_api === '1') ? external_controller : null,
 			external_ui: external_ui,
 			external_ui_download_url: external_ui_download_url,
-			external_ui_download_detour: normalize_outbound(outbound_tags, external_ui_download_detour),
+			external_ui_download_detour: get_outbound(
+				external_ui_download_detour,
+				'external_ui_download_detour'
+			),
 			secret: secret,
 			default_mode: default_mode
 		}
