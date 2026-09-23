@@ -40,6 +40,8 @@ function createUci(sections) {
 			return option === undefined ? target : target?.[option];
 		},
 		set(config, section, option, value) {
+			if (Array.isArray(value) && value.length === 0)
+				throw new Error('uci.set rejects empty lists');
 			const target = state.find((entry) => entry['.name'] === section);
 			calls.set.push([config, section, option, value]);
 			target[option] = Array.isArray(value) ? [...value] : value;
@@ -60,14 +62,20 @@ test('removes deleted nodes from groups without deleting groups or inventing dir
 		{
 			'.name': 'config',
 			'.type': 'config',
-			main_urltest_nodes: ['n1', 'n2'],
-			main_udp_urltest_nodes: ['n1']
+			main_urltest_nodes: ['n1', 'n2', 'dangling'],
+			main_udp_urltest_nodes: ['n1', 'dangling']
 		},
 		{
 			'.name': 'legacy-route-test',
 			'.type': 'routing_node',
 			node: 'urltest',
-			urltest_nodes: ['n1', 'n2']
+			urltest_nodes: ['n1', 'n2', 'dangling']
+		},
+		{
+			'.name': 'legacy-route-empty',
+			'.type': 'routing_node',
+			node: 'urltest',
+			urltest_nodes: ['n1', 'dangling']
 		},
 		{ '.name': 'n1', '.type': 'node', type: 'vless', label: 'Hong Kong' },
 		{ '.name': 'n2', '.type': 'node', type: 'trojan', label: 'Los Angeles' },
@@ -107,7 +115,7 @@ test('removes deleted nodes from groups without deleting groups or inventing dir
 
 	assert.deepEqual(plain(uci.section('selector').outbounds), ['n2']);
 	assert.equal(uci.section('selector').default, undefined);
-	assert.deepEqual(plain(uci.section('empty').outbounds), []);
+	assert.equal(uci.section('empty').outbounds, undefined);
 	assert.equal(uci.section('empty').default, undefined);
 	assert.ok(uci.section('selector'));
 	assert.ok(uci.section('empty'));
@@ -116,19 +124,21 @@ test('removes deleted nodes from groups without deleting groups or inventing dir
 	assert.match(logs.join('\n'), /empty.*Auto/);
 	assert.equal(uci.calls.set.some((call) => call[3] === 'direct-out'), false);
 	assert.deepEqual(plain(uci.section('config').main_urltest_nodes), ['n2']);
-	assert.deepEqual(plain(uci.section('config').main_udp_urltest_nodes), []);
+	assert.equal(uci.section('config').main_udp_urltest_nodes, undefined);
 	assert.deepEqual(plain(uci.section('legacy-route-test').urltest_nodes), ['n2']);
+	assert.equal(uci.section('legacy-route-empty').urltest_nodes, undefined);
 	assert.deepEqual(plain(uci.calls.delete), [
+		['homeproxy-ce', 'config', 'main_udp_urltest_nodes'],
+		['homeproxy-ce', 'legacy-route-empty', 'urltest_nodes'],
 		['homeproxy-ce', 'selector', 'default'],
+		['homeproxy-ce', 'empty', 'outbounds'],
 		['homeproxy-ce', 'empty', 'default'],
 		['homeproxy-ce', 'default-only', 'default']
 	]);
 	assert.deepEqual(plain(uci.calls.set), [
 		['homeproxy-ce', 'config', 'main_urltest_nodes', ['n2']],
-		['homeproxy-ce', 'config', 'main_udp_urltest_nodes', []],
 		['homeproxy-ce', 'legacy-route-test', 'urltest_nodes', ['n2']],
-		['homeproxy-ce', 'selector', 'outbounds', ['n2']],
-		['homeproxy-ce', 'empty', 'outbounds', []]
+		['homeproxy-ce', 'selector', 'outbounds', ['n2']]
 	]);
 });
 

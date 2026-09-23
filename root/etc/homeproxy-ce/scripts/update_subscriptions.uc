@@ -494,7 +494,7 @@ function cleanRemovedNodeReferences(uci, config, removed_ids) {
 			changed = false;
 		for (let i = 0; i < length(references || []); i++) {
 			const reference = references[i];
-			if (removed[reference]) {
+			if (removed[reference] || !uci.get(config, reference)) {
 				changed = true;
 				log('Node ' + reference + ' is gone, removing from urltest list.');
 				continue;
@@ -502,8 +502,12 @@ function cleanRemovedNodeReferences(uci, config, removed_ids) {
 			filtered[length(filtered)] = reference;
 		}
 
-		if (changed)
-			uci.set(config, section, option, filtered);
+		if (changed) {
+			if (length(filtered))
+				uci.set(config, section, option, filtered);
+			else
+				uci.delete(config, section, option);
+		}
 
 		return changed;
 	}
@@ -543,8 +547,12 @@ function cleanRemovedNodeReferences(uci, config, removed_ids) {
 		if (!changed && !default_removed)
 			return null;
 
-		if (changed)
-			uci.set(config, cfg['.name'], 'outbounds', outbounds);
+		if (changed) {
+			if (length(outbounds))
+				uci.set(config, cfg['.name'], 'outbounds', outbounds);
+			else
+				uci.delete(config, cfg['.name'], 'outbounds');
+		}
 		if (default_removed)
 			uci.delete(config, cfg['.name'], 'default');
 
@@ -694,6 +702,11 @@ function main() {
 					}
 					return true;
 				});
+				if (length(main_urltest_nodes))
+					uci.set(uciconfig, ucimain, 'main_urltest_nodes', main_urltest_nodes);
+				else
+					uci.delete(uciconfig, ucimain, 'main_urltest_nodes');
+				main_urltest_nodes = uci.get(uciconfig, ucimain, 'main_urltest_nodes') || [];
 			}
 
 			if ((main_node === 'urltest') ? !length(main_urltest_nodes) : !uci.get(uciconfig, main_node)) {
@@ -714,6 +727,11 @@ function main() {
 						}
 						return true;
 					});
+					if (length(main_udp_urltest_nodes))
+						uci.set(uciconfig, ucimain, 'main_udp_urltest_nodes', main_udp_urltest_nodes);
+					else
+						uci.delete(uciconfig, ucimain, 'main_udp_urltest_nodes');
+					main_udp_urltest_nodes = uci.get(uciconfig, ucimain, 'main_udp_urltest_nodes') || [];
 				}
 
 				if ((main_udp_node === 'urltest') ? !length(main_udp_urltest_nodes) : !uci.get(uciconfig, main_udp_node)) {
