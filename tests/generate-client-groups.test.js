@@ -407,25 +407,6 @@ test('keeps legacy routing URLTest output alongside node URLTest output', () => 
 });
 
 test('assembles an end-to-end client config with nested groups, legacy URLTest and experimental settings', () => {
-	const configuredOutboundTag = (reference) => {
-		if (['direct-out', 'block-out'].includes(reference))
-			return reference;
-		return `cfg-${reference}-out`;
-	};
-	const fixtureHelpers = extractUcodeFunctions(
-		source,
-		['buildDnsRule', 'buildRouteRule', 'generateLegacyRoutingUrltest'],
-		{
-			...context,
-			configuredOutboundTag,
-			parse_dnsquery: (value) => value,
-			parse_port: (value) => value,
-			get_outbound: configuredOutboundTag,
-			get_resolver: (value) => value,
-			get_ruleset: (value) => value
-		}
-	);
-
 	const routingNodes = [
 		{
 			'.name': 'legacy-auto',
@@ -437,10 +418,44 @@ test('assembles an end-to-end client config with nested groups, legacy URLTest a
 			urltest_idle_timeout: '1800'
 		}
 	];
+	const uciRuntime = {
+		...context,
+		formatNodeReferenceError,
+		node_reference_index: referenceIndex,
+		routing_node_sections: {
+			'legacy-auto': routingNodes[0]
+		}
+	};
+	const fixtureHelpers = extractUcodeFunctions(
+		source,
+		[
+			'get_outbound',
+			'get_resolver',
+			'get_ruleset',
+			'parse_dnsquery',
+			'parse_port',
+			'has_outbound',
+			'strictOutboundTag',
+			'configuredOutboundTag',
+			'buildDnsRule',
+			'buildRouteRule',
+			'generateLegacyRoutingUrltest',
+			'buildExperimentalConfig'
+		],
+		{
+			...uciRuntime,
+			legacy_dns_server_format: false
+		}
+	);
 	const plannedNodes = collectPlannedNodes(nodes, ['g2']);
 	const generatedOutbounds = plannedNodes.map((node) => generate_outbound(node, referenceIndex));
 	const legacyOutbounds = routingNodes.map((routingNode) =>
 		fixtureHelpers.generateLegacyRoutingUrltest(routingNode)
+	);
+	const outboundTags = Object.fromEntries(
+		[...generatedOutbounds, ...legacyOutbounds,
+			{ tag: 'direct-out' }, { tag: 'block-out' }]
+			.map((outbound) => [outbound.tag, true])
 	);
 	const generated = {
 		outbounds: [
@@ -455,18 +470,34 @@ test('assembles an end-to-end client config with nested groups, legacy URLTest a
 		route: {
 			rules: [fixtureHelpers.buildRouteRule({ clash_mode: 'rule', outbound: 'g2' })]
 		},
-		experimental: {
-			cache_file: {
-				enabled: true,
-				path: '/var/run/homeproxy-ce/cache.db'
-			},
-			clash_api: {
-				external_controller: '127.0.0.1:9090',
-				default_mode: 'rule'
-			}
-		}
+		experimental: fixtureHelpers.buildExperimentalConfig({
+			run_dir: '/var/run/homeproxy-ce',
+			enable_clash_api: '1',
+			external_controller: '127.0.0.1:9090',
+			external_ui: 'dashboard',
+			external_ui_download_url: 'https://example.com/dashboard.zip',
+			external_ui_download_detour: 'legacy-auto',
+			default_mode: 'rule',
+			cache_file_store_rdrc: '1',
+			cache_file_rdrc_timeout: '60'
+		}, outboundTags)
 	};
 
+	assert.equal(fixtureHelpers.get_outbound('legacy-auto', 'routing-rule'), 'cfg-legacy-auto-out');
+	assert.equal(fixtureHelpers.get_outbound('g2', 'routing-rule'), 'cfg-g2-out');
+	assert.throws(
+		() => fixtureHelpers.buildExperimentalConfig({
+			run_dir: '/var/run/homeproxy-ce',
+			enable_clash_api: '1',
+			external_ui_download_detour: 'missing-detour'
+		}, outboundTags),
+		/section=external_ui_download_detour.*reference=missing-detour/
+	);
+	const disabledClashApi = fixtureHelpers.buildExperimentalConfig({
+		run_dir: '/var/run/homeproxy-ce',
+		enable_clash_api: '0'
+	}, outboundTags);
+	assert.equal(disabledClashApi.clash_api.external_controller, null);
 	const tags = generated.outbounds.map((outbound) => outbound.tag);
 	assert.deepEqual(tags, [
 		'direct-out',
@@ -477,6 +508,15 @@ test('assembles an end-to-end client config with nested groups, legacy URLTest a
 		'cfg-g2-out',
 		'cfg-legacy-auto-out'
 	]);
+	assert.deepEqual(
+		generated.outbounds
+			.filter((outbound) => ['vless', 'trojan'].includes(outbound.type))
+			.map(({ type, tag, server, server_port }) => ({ type, tag, server, server_port })),
+		[
+			{ type: 'vless', tag: 'cfg-n1-out', server: '198.51.100.1', server_port: 443 },
+			{ type: 'trojan', tag: 'cfg-n2-out', server: '198.51.100.2', server_port: 443 }
+		]
+	);
 	assert.deepEqual(
 		plain(generated.outbounds.filter((outbound) => outbound.type === 'urltest')),
 		[
@@ -513,10 +553,15 @@ test('assembles an end-to-end client config with nested groups, legacy URLTest a
 	assert.equal(generated.route.rules[0].outbound, 'cfg-g2-out');
 	assert.deepEqual(plain(generated.experimental.cache_file), {
 		enabled: true,
-		path: '/var/run/homeproxy-ce/cache.db'
+		path: '/var/run/homeproxy-ce/cache.db',
+		store_rdrc: true,
+		rdrc_timeout: '60s'
 	});
 	assert.deepEqual(plain(generated.experimental.clash_api), {
 		external_controller: '127.0.0.1:9090',
+		external_ui: 'dashboard',
+		external_ui_download_url: 'https://example.com/dashboard.zip',
+		external_ui_download_detour: 'cfg-legacy-auto-out',
 		default_mode: 'rule'
 	});
 });

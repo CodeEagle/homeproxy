@@ -859,6 +859,36 @@ function strictOutboundTag(outbound_tags, tag, section) {
 	return null;
 }
 
+function buildExperimentalConfig(options, outbound_tags) {
+	const external_ui_download_detour = get_outbound(
+		options.external_ui_download_detour,
+		'external_ui_download_detour'
+	);
+
+	return {
+		cache_file: {
+			enabled: true,
+			path: options.run_dir + '/cache.db',
+			store_rdrc: strToBool(options.cache_file_store_rdrc),
+			rdrc_timeout: strToTime(options.cache_file_rdrc_timeout),
+		},
+		clash_api: {
+			external_controller: (options.enable_clash_api === '1')
+				? options.external_controller
+				: null,
+			external_ui: options.external_ui,
+			external_ui_download_url: options.external_ui_download_url,
+			external_ui_download_detour: strictOutboundTag(
+				outbound_tags,
+				external_ui_download_detour,
+				'external_ui_download_detour'
+			),
+			secret: options.secret,
+			default_mode: options.default_mode
+		}
+	};
+}
+
 function strictFilterOutbounds(outbound_tags, tags, section) {
 	let filtered = [];
 	for (let i = 0; i < length(tags || []); i++) {
@@ -1687,25 +1717,18 @@ if (!isEmpty(main_node)) {
 
 /* Experimental start */
 if (routing_mode in ['bypass_mainland_china', 'custom']) {
-	config.experimental = {
-		cache_file: {
-			enabled: true,
-			path: RUN_DIR + '/cache.db',
-			store_rdrc: strToBool(cache_file_store_rdrc),
-			rdrc_timeout: strToTime(cache_file_rdrc_timeout),
-		},
-		clash_api: {
-			external_controller: (enable_clash_api === '1') ? external_controller : null,
-			external_ui: external_ui,
-			external_ui_download_url: external_ui_download_url,
-			external_ui_download_detour: get_outbound(
-				external_ui_download_detour,
-				'external_ui_download_detour'
-			),
-			secret: secret,
-			default_mode: default_mode
-		}
-	};
+	config.experimental = buildExperimentalConfig({
+		run_dir: RUN_DIR,
+		enable_clash_api,
+		external_controller,
+		external_ui,
+		external_ui_download_url,
+		external_ui_download_detour,
+		secret,
+		default_mode,
+		cache_file_store_rdrc,
+		cache_file_rdrc_timeout
+	}, outbound_tags);
 }
 
 for (let rule in config.route.rules)
