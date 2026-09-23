@@ -245,6 +245,31 @@ return baseclass.extend({
 			.map((node) => ({ value: node['.name'], label: node.label || node['.name'] }));
 	},
 
+	outboundNodeChoices(nodes, routingNodes, currentId) {
+		const choices = [{ value: 'direct-out', label: _('Direct') }];
+		const seen = new Set(['direct-out']);
+
+		for (const routingNode of routingNodes || []) {
+			const id = routingNode?.['.name'];
+			if (!id || id === currentId || routingNode.enabled !== '1' || seen.has(id))
+				continue;
+
+			choices.push({ value: id, label: nodeDisplayName(routingNode, id) });
+			seen.add(id);
+		}
+
+		for (const node of nodes || []) {
+			const id = node?.['.name'];
+			if (!id || id === currentId || !isNodeGroup(node) || seen.has(id))
+				continue;
+
+			choices.push({ value: id, label: nodeDisplayName(node, id) });
+			seen.add(id);
+		}
+
+		return choices;
+	},
+
 	findNodeGroupReferences(nodes, targetId) {
 		return (nodes || []).filter((node) =>
 			isNodeGroup(node) && asNodeList(node.outbounds).includes(targetId));

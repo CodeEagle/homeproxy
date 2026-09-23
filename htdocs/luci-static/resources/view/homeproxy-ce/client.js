@@ -87,17 +87,22 @@ return view.extend({
 		let features = data[1],
 		    hosts = data[2]?.hosts;
 
-		/* Cache all configured proxy nodes, they will be called multiple times */
-		let proxy_nodes = {};
+		/* Cache all configured nodes, they will be called multiple times */
+		let proxy_nodes = {},
+			nodes = [];
 		uci.sections(data[0], 'node', (res) => {
+			nodes.push(res);
+
 			let nodeaddr = ((res.type === 'direct') ? res.override_address : res.address) || '',
 			    nodeport = ((res.type === 'direct') ? res.override_port : res.port) || '';
+			let display = (['selector', 'urltest'].includes(res.type))
+				? (res.label || res['.name'])
+				: (res.label || ((stubValidator.apply('ip6addr', nodeaddr) ?
+					String.format('[%s]', nodeaddr) : nodeaddr) + ':' + nodeport));
 
 			proxy_nodes[res['.name']] =
-				String.format('[%s] %s', res.type, res.label || ((stubValidator.apply('ip6addr', nodeaddr) ?
-					String.format('[%s]', nodeaddr) : nodeaddr) + ':' + nodeport));
+				String.format('[%s] %s', res.type, display);
 		});
-
 		let has_routing_nodes = false;
 		uci.sections(data[0], 'routing_node', (res) => {
 			if (res.enabled === '1')
@@ -126,13 +131,20 @@ return view.extend({
 					add(res['.name'], res.label);
 			});
 
-			if (!has_routing_nodes)
-				uci.sections(data[0], 'node', (res) => {
-					let tag = res.label || res['.name'];
+			uci.sections(data[0], 'node', (res) => {
+				if (res['.name'] === section_id)
+					return;
 
-					if (tag !== section_id && res.enabled !== '0')
-						add(tag, proxy_nodes[res['.name']] || res.label || res['.name']);
-				});
+				if (['selector', 'urltest'].includes(res.type)) {
+					add(res['.name'], res.label || res['.name']);
+					return;
+				}
+
+				if (!has_routing_nodes && res.enabled !== '0') {
+					let tag = res.label || res['.name'];
+					add(tag, proxy_nodes[res['.name']] || res.label || res['.name']);
+				}
+			});
 		}
 
 		function loadDnsServerChoices(option, builtins, section_id) {
@@ -511,11 +523,7 @@ return view.extend({
 			delete this.keylist;
 			delete this.vallist;
 
-			this.value('', _('Direct'));
-			uci.sections(data[0], 'routing_node', (res) => {
-				if (res['.name'] !== section_id && res.enabled === '1')
-					this.value(res['.name'], res.label);
-			});
+			addOutboundChoices(this, section_id);
 
 			return this.super('load', section_id);
 		}
@@ -722,6 +730,13 @@ return view.extend({
 		so.default = 'route';
 		so.rmempty = false;
 		so.editable = true;
+
+		so = ss.taboption('field_other', form.ListValue, 'clash_mode', _('Clash mode'));
+		so.value('', _('-- Please choose --'));
+		so.value('direct', _('Direct'));
+		so.value('rule', _('Rule'));
+		so.value('global', _('Global'));
+		so.value('script', _('Script'));
 
 		so = ss.taboption('field_other', form.ListValue, 'outbound', _('Outbound'),
 			_('Tag of the target outbound.'));
@@ -1175,6 +1190,13 @@ return view.extend({
 		so.rmempty = false;
 		so.editable = true;
 
+		so = ss.taboption('field_other', form.ListValue, 'clash_mode', _('Clash mode'));
+		so.value('', _('-- Please choose --'));
+		so.value('direct', _('Direct'));
+		so.value('rule', _('Rule'));
+		so.value('global', _('Global'));
+		so.value('script', _('Script'));
+
 		so = ss.taboption('field_other', form.ListValue, 'server', _('Server'),
 			_('Tag of the target dns server.'));
 		so.load = function(section_id) {
@@ -1582,8 +1604,15 @@ return view.extend({
 		so = ss.option(form.Value, 'external_ui_download_url', _('UI Download link'));
 		so.depends('enable_clash_api', '1');
 
-		so = ss.option(form.Value, 'external_ui_download_detour', _('UI Download detour'));
-		so.placeholder = 'direct-out';
+		so = ss.option(form.ListValue, 'external_ui_download_detour', _('UI Download detour'));
+		so.load = function(section_id) {
+			delete this.keylist;
+			delete this.vallist;
+
+			addOutboundChoices(this);
+
+			return this.super('load', section_id);
+		}
 		so.depends('enable_clash_api', '1');
 
 		so = ss.option(form.ListValue, 'default_mode', _('Default mode'));

@@ -710,6 +710,88 @@ function get_ruleset(cfg) {
 	return rules;
 }
 
+function buildDnsRule(cfg) {
+	return {
+		ip_version: strToInt(cfg.ip_version),
+		query_type: parse_dnsquery(cfg.query_type),
+		network: cfg.network,
+		protocol: cfg.protocol,
+		domain: cfg.domain,
+		domain_suffix: cfg.domain_suffix,
+		domain_keyword: cfg.domain_keyword,
+		domain_regex: cfg.domain_regex,
+		port: parse_port(cfg.port),
+		port_range: cfg.port_range,
+		source_ip_cidr: cfg.source_ip_cidr,
+		source_ip_is_private: strToBool(cfg.source_ip_is_private),
+		ip_cidr: cfg.ip_cidr,
+		ip_is_private: strToBool(cfg.ip_is_private),
+		source_port: parse_port(cfg.source_port),
+		source_port_range: cfg.source_port_range,
+		process_name: cfg.process_name,
+		process_path: cfg.process_path,
+		process_path_regex: cfg.process_path_regex,
+		user: cfg.user,
+		rule_set: get_ruleset(cfg.rule_set),
+		rule_set_ip_cidr_match_source: strToBool(cfg.rule_set_ip_cidr_match_source),
+		rule_set_ip_cidr_accept_empty: strToBool(cfg.rule_set_ip_cidr_accept_empty),
+		invert: strToBool(cfg.invert),
+		outbound: get_outbound(cfg.outbound, cfg['.name']),
+		action: cfg.action,
+		clash_mode: cfg.clash_mode,
+		server: (cfg.server === 'block-dns') ? 'block-dns' : get_resolver(cfg.server, 'DNS rule server'),
+		strategy: cfg.domain_strategy,
+		disable_cache: strToBool(cfg.dns_disable_cache),
+		rewrite_ttl: strToInt(cfg.rewrite_ttl),
+		client_subnet: cfg.client_subnet,
+		method: cfg.reject_method,
+		no_drop: strToBool(cfg.reject_no_drop),
+		rcode: cfg.predefined_rcode,
+		answer: cfg.predefined_answer,
+		ns: cfg.predefined_ns,
+		extra: cfg.predefined_extra
+	};
+}
+
+function buildRouteRule(cfg) {
+	return {
+		ip_version: strToInt(cfg.ip_version),
+		protocol: cfg.protocol,
+		network: cfg.network,
+		domain: cfg.domain,
+		domain_suffix: cfg.domain_suffix,
+		domain_keyword: cfg.domain_keyword,
+		domain_regex: cfg.domain_regex,
+		source_ip_cidr: cfg.source_ip_cidr,
+		source_ip_is_private: strToBool(cfg.source_ip_is_private),
+		ip_cidr: cfg.ip_cidr,
+		ip_is_private: strToBool(cfg.ip_is_private),
+		source_port: parse_port(cfg.source_port),
+		source_port_range: cfg.source_port_range,
+		port: parse_port(cfg.port),
+		port_range: cfg.port_range,
+		process_name: cfg.process_name,
+		process_path: cfg.process_path,
+		process_path_regex: cfg.process_path_regex,
+		user: cfg.user,
+		rule_set: get_ruleset(cfg.rule_set),
+		rule_set_ip_cidr_match_source: strToBool(cfg.rule_set_ip_cidr_match_source),
+		rule_set_ip_cidr_accept_empty: strToBool(cfg.rule_set_ip_cidr_accept_empty),
+		invert: strToBool(cfg.invert),
+		action: cfg.action,
+		clash_mode: cfg.clash_mode,
+		outbound: get_outbound(cfg.outbound, cfg['.name']),
+		override_address: cfg.override_address,
+		override_port: strToInt(cfg.override_port),
+		udp_disable_domain_unmapping: strToBool(cfg.udp_disable_domain_unmapping),
+		udp_connect: strToBool(cfg.udp_connect),
+		udp_timeout: strToTime(cfg.udp_timeout),
+		tls_fragment: strToBool(cfg.tls_fragment),
+		tls_fragment_fallback_delay: strToTime(cfg.tls_fragment_fallback_delay),
+		tls_record_fragment: strToBool(cfg.tls_record_fragment)
+	};
+}
+
 function has_outbound(outbound_tags, tag) {
 	return !!(tag && outbound_tags[tag]);
 }
@@ -1080,48 +1162,10 @@ if (!isEmpty(main_node)) {
 		if (cfg.enabled !== '1')
 			return;
 
-		let dns_rule = {
-			ip_version: strToInt(cfg.ip_version),
-			query_type: parse_dnsquery(cfg.query_type),
-			network: cfg.network,
-			protocol: cfg.protocol,
-			domain: cfg.domain,
-			domain_suffix: cfg.domain_suffix,
-			domain_keyword: cfg.domain_keyword,
-			domain_regex: cfg.domain_regex,
-			port: parse_port(cfg.port),
-			port_range: cfg.port_range,
-			source_ip_cidr: cfg.source_ip_cidr,
-			source_ip_is_private: strToBool(cfg.source_ip_is_private),
-			ip_cidr: cfg.ip_cidr,
-			ip_is_private: strToBool(cfg.ip_is_private),
-			source_port: parse_port(cfg.source_port),
-			source_port_range: cfg.source_port_range,
-			process_name: cfg.process_name,
-			process_path: cfg.process_path,
-			process_path_regex: cfg.process_path_regex,
-			user: cfg.user,
-			clash_mode: cfg.clash_mode,
-			rule_set: get_ruleset(cfg.rule_set),
-			rule_set_ip_cidr_match_source: strToBool(cfg.rule_set_ip_cidr_match_source),
-			rule_set_ip_cidr_accept_empty: strToBool(cfg.rule_set_ip_cidr_accept_empty),
-			invert: strToBool(cfg.invert),
-			outbound: get_outbound(cfg.outbound),
-			action: cfg.action,
-			server: (cfg.server === 'block-dns') ? 'block-dns' : get_resolver(cfg.server, 'DNS rule server'),
-			strategy: cfg.domain_strategy,
-			disable_cache: strToBool(cfg.dns_disable_cache),
-			rewrite_ttl: strToInt(cfg.rewrite_ttl),
-			client_subnet: cfg.client_subnet,
-			method: cfg.reject_method,
-			no_drop: strToBool(cfg.reject_no_drop),
-			rcode: cfg.predefined_rcode,
-			answer: cfg.predefined_answer,
-			ns: cfg.predefined_ns,
-			extra: cfg.predefined_extra
-		};
-
-		push(config.dns.rules, normalize_dns_rule_for_core(dns_rule, legacy_dns_server_format));
+		push(config.dns.rules, normalize_dns_rule_for_core(
+			buildDnsRule(cfg),
+			legacy_dns_server_format
+		));
 	});
 
 	if (isEmpty(config.dns.rules))
@@ -1341,6 +1385,19 @@ function configuredOutboundTag(reference, section) {
 	return tag;
 }
 
+function generateLegacyRoutingUrltest(cfg) {
+	return removeBlankAttrs({
+		type: 'urltest',
+		tag: 'cfg-' + cfg['.name'] + '-out',
+		outbounds: map(cfg.urltest_nodes || [], (k) => configuredOutboundTag(k, cfg['.name'])),
+		url: cfg.urltest_url,
+		interval: strToTime(cfg.urltest_interval),
+		tolerance: strToInt(cfg.urltest_tolerance),
+		idle_timeout: strToTime(cfg.urltest_idle_timeout),
+		interrupt_exist_connections: strToBool(cfg.urltest_interrupt_exist_connections)
+	});
+}
+
 function applyRoutingNodeMetadata(node_id, cfg, visited) {
 	if (!visited)
 		visited = {};
@@ -1439,16 +1496,7 @@ if (!isEmpty(main_node)) {
 			return;
 
 		if (cfg.node === 'urltest') {
-			push(config.outbounds, removeBlankAttrs({
-				type: 'urltest',
-				tag: 'cfg-' + cfg['.name'] + '-out',
-				outbounds: map(cfg.urltest_nodes || [], (k) => configuredOutboundTag(k, cfg['.name'])),
-				url: cfg.urltest_url,
-				interval: strToTime(cfg.urltest_interval),
-				tolerance: strToInt(cfg.urltest_tolerance),
-				idle_timeout: strToTime(cfg.urltest_idle_timeout),
-				interrupt_exist_connections: strToBool(cfg.urltest_interrupt_exist_connections)
-			}));
+			push(config.outbounds, generateLegacyRoutingUrltest(cfg));
 			return;
 		}
 
@@ -1614,41 +1662,7 @@ if (!isEmpty(main_node)) {
 		if (cfg.enabled !== '1')
 			return null;
 
-		push(config.route.rules, {
-			ip_version: strToInt(cfg.ip_version),
-			protocol: cfg.protocol,
-			network: cfg.network,
-			domain: cfg.domain,
-			domain_suffix: cfg.domain_suffix,
-			domain_keyword: cfg.domain_keyword,
-			domain_regex: cfg.domain_regex,
-			source_ip_cidr: cfg.source_ip_cidr,
-			source_ip_is_private: strToBool(cfg.source_ip_is_private),
-			ip_cidr: cfg.ip_cidr,
-			ip_is_private: strToBool(cfg.ip_is_private),
-			source_port: parse_port(cfg.source_port),
-			source_port_range: cfg.source_port_range,
-			port: parse_port(cfg.port),
-			port_range: cfg.port_range,
-			process_name: cfg.process_name,
-			process_path: cfg.process_path,
-			process_path_regex: cfg.process_path_regex,
-			user: cfg.user,
-			clash_mode: cfg.clash_mode,
-			rule_set: get_ruleset(cfg.rule_set),
-			rule_set_ip_cidr_match_source: strToBool(cfg.rule_set_ip_cidr_match_source),
-			invert: strToBool(cfg.invert),
-			action: cfg.action,
-			outbound: get_outbound(cfg.outbound),
-			override_address: cfg.override_address,
-			override_port: strToInt(cfg.override_port),
-			udp_disable_domain_unmapping: strToBool(cfg.udp_disable_domain_unmapping),
-			udp_connect: strToBool(cfg.udp_connect),
-			udp_timeout: strToTime(cfg.udp_timeout),
-			tls_fragment: strToBool(cfg.tls_fragment),
-			tls_fragment_fallback_delay: strToTime(cfg.tls_fragment_fallback_delay),
-			tls_record_fragment: strToBool(cfg.tls_record_fragment)
-		});
+		push(config.route.rules, buildRouteRule(cfg));
 	});
 
 	config.route.final = get_outbound(default_outbound);

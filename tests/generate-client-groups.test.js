@@ -360,3 +360,47 @@ test('keeps the caller section when resolving an explicit detour fails', () => {
 		/section=external_ui_download_detour.*reference=gone/
 	);
 });
+
+function generatorHelpers() {
+	return extractUcodeFunctions(
+		source,
+		['buildDnsRule', 'buildRouteRule', 'generateLegacyRoutingUrltest'],
+		{
+			...context,
+			configuredOutboundTag: (reference) => `cfg-${reference}-out`,
+			parse_dnsquery: (value) => value,
+			parse_port: (value) => value,
+			get_outbound: (value) => value,
+			get_resolver: (value) => value,
+			get_ruleset: (value) => value
+		}
+	);
+}
+
+test('preserves Clash mode in generated DNS and route rules', () => {
+	const helpers = generatorHelpers();
+
+	assert.equal(helpers.buildDnsRule({ clash_mode: 'global' }).clash_mode, 'global');
+	assert.equal(helpers.buildRouteRule({ clash_mode: 'global' }).clash_mode, 'global');
+});
+
+test('keeps legacy routing URLTest output alongside node URLTest output', () => {
+	const helpers = generatorHelpers();
+
+	const legacy = helpers.generateLegacyRoutingUrltest({
+		'.name': 'r1',
+		node: 'urltest',
+		urltest_nodes: ['n1', 'n2'],
+		urltest_url: 'https://example.com/204',
+		urltest_interval: '180',
+		urltest_tolerance: '50',
+		urltest_idle_timeout: '1800'
+	});
+
+	assert.equal(legacy.tag, 'cfg-r1-out');
+	assert.equal(plain(generate_outbound(nodes[2], referenceIndex)).tag, 'cfg-g1-out');
+	assert.deepEqual(
+		plain(collectPlannedNodes(nodes, ['g1']).map((node) => node['.name'])),
+		['n1', 'n2', 'g1']
+	);
+});
