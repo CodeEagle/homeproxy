@@ -482,12 +482,6 @@ function buildDefaultOutbounds(mark) {
 			tag: 'block-out'
 		}
 	];
-	if (legacy_route_rule_format)
-		push(outbounds, {
-			type: 'dns',
-			tag: 'dns-out'
-		});
-
 	return outbounds;
 }
 
@@ -1300,6 +1294,11 @@ if (tailscale_endpoint)
 
 /* Default outbounds */
 config.outbounds = buildDefaultOutbounds(self_mark);
+if (legacy_route_rule_format)
+	push(config.outbounds, {
+		type: 'dns',
+		tag: 'dns-out'
+	});
 
 /* Main outbounds */
 let planned_inputs = {
@@ -1359,7 +1358,8 @@ if (!isEmpty(main_node)) {
 const planned_roots = collectClientDependencyRoots(planned_inputs);
 const planned_nodes = collectPlannedNodes(node_sections, planned_roots);
 let generated_outbounds = {},
-	generated_endpoints = {};
+	generated_endpoints = {},
+	routing_metadata_state = {};
 
 for (let i = 0; i < length(planned_nodes); i++) {
 	const node = planned_nodes[i];
@@ -1434,9 +1434,31 @@ function generateLegacyRoutingUrltest(cfg) {
 	});
 }
 
-function applyRoutingNodeMetadata(node_id, cfg, visited) {
+function routingMetadataEquivalent(left, right) {
+	return left.bind_interface === right.bind_interface &&
+		left.detour === right.detour &&
+		((!left.domain_resolver && !right.domain_resolver) ||
+			(left.domain_resolver && right.domain_resolver &&
+				left.domain_resolver.server === right.domain_resolver.server &&
+				left.domain_resolver.strategy === right.domain_resolver.strategy));
+}
+
+function formatRoutingMetadataConflict(node_id, generated, existing, section) {
+	let sections = [];
+	for (let i = 0; i < length(existing.sections); i++)
+		push(sections, existing.sections[i]);
+	if (section)
+		push(sections, section);
+
+	const tag = generated ? generated.tag : outboundTag(node_id);
+	return `routing metadata conflict: leaf_section=${node_id} leaf_tag=${tag} routing_sections=${join(',', sections)}`;
+}
+
+function applyRoutingNodeMetadata(node_id, cfg, visited, metadata_state) {
 	if (!visited)
 		visited = {};
+	if (!metadata_state)
+		metadata_state = {};
 	if (visited[node_id])
 		return;
 	visited[node_id] = true;
@@ -1464,7 +1486,7 @@ function applyRoutingNodeMetadata(node_id, cfg, visited) {
 		for (let i = 0; i < length(normalized.outbounds); i++) {
 			const member = normalized.outbounds[i];
 			if (member !== 'direct-out' && member !== 'block-out')
-				applyRoutingNodeMetadata(member, cfg, visited);
+				applyRoutingNodeMetadata(member, cfg, visited, metadata_state);
 		}
 		return;
 	}
@@ -1473,13 +1495,29 @@ function applyRoutingNodeMetadata(node_id, cfg, visited) {
 	if (!generated)
 		return;
 
-	generated.bind_interface = cfg.bind_interface;
-	generated.detour = get_outbound(cfg.outbound, cfg['.name']);
-	if (cfg.domain_resolver)
-		generated.domain_resolver = {
+	const metadata = {
+		bind_interface: cfg.bind_interface || null,
+		detour: get_outbound(cfg.outbound, cfg['.name']) || null,
+		domain_resolver: cfg.domain_resolver ? {
 			server: get_resolver(cfg.domain_resolver),
-			strategy: cfg.domain_strategy
-		};
+			strategy: cfg.domain_strategy || null
+		} : null
+	};
+	const existing = metadata_state[node_id];
+	if (existing) {
+		if (!routingMetadataEquivalent(existing.metadata, metadata))
+			die(formatRoutingMetadataConflict(node_id, generated, existing, cfg['.name']));
+		return;
+	}
+
+	metadata_state[node_id] = {
+		metadata,
+		sections: [cfg['.name']]
+	};
+	generated.bind_interface = metadata.bind_interface;
+	generated.detour = metadata.detour;
+	if (metadata.domain_resolver)
+		generated.domain_resolver = metadata.domain_resolver;
 }
 
 if (!isEmpty(main_node)) {
@@ -1542,7 +1580,7 @@ if (!isEmpty(main_node)) {
 			die(formatNodeReferenceError(node_result));
 		}
 
-		applyRoutingNodeMetadata(node_result.id, cfg, {});
+		applyRoutingNodeMetadata(node_result.id, cfg, {}, routing_metadata_state);
 	});
 }
 

@@ -89,7 +89,8 @@ return view.extend({
 
 		/* Cache all configured nodes, they will be called multiple times */
 		let proxy_nodes = {},
-			nodes = [];
+			nodes = [],
+			routing_nodes = [];
 		uci.sections(data[0], 'node', (res) => {
 			nodes.push(res);
 
@@ -103,75 +104,15 @@ return view.extend({
 			proxy_nodes[res['.name']] =
 				String.format('[%s] %s', res.type, display);
 		});
-		let has_routing_nodes = false;
-		uci.sections(data[0], 'routing_node', (res) => {
-			if (res.enabled === '1')
-				has_routing_nodes = true;
-		});
+		uci.sections(data[0], 'routing_node', (res) => routing_nodes.push(res));
+		const routing_mode = uci.get(data[0], 'config', 'routing_mode') || 'bypass_mainland_china';
 
-		function loadOutboundChoices(option, builtins, section_id) {
-			let seen = {};
-
-			delete option.keylist;
-			delete option.vallist;
-
-			function add(value, label) {
-				if (value == null || seen[value])
-					return;
-
-				seen[value] = true;
-				option.value(value, label || value);
-			}
-
-			for (let i = 0; i < (builtins || []).length; i++)
-				add(builtins[i][0], builtins[i][1]);
-
-			uci.sections(data[0], 'routing_node', (res) => {
-				if (res['.name'] !== section_id && res.enabled === '1')
-					add(res['.name'], res.label);
-			});
-
-			uci.sections(data[0], 'node', (res) => {
-				if (res['.name'] === section_id)
-					return;
-
-				if (['selector', 'urltest'].includes(res.type)) {
-					add(res['.name'], res.label || res['.name']);
-					return;
-				}
-
-				if (!has_routing_nodes && res.enabled !== '0') {
-					let tag = res.label || res['.name'];
-					add(tag, proxy_nodes[res['.name']] || res.label || res['.name']);
-				}
-			});
-		}
-
-		function loadDnsServerChoices(option, builtins, section_id) {
-			let seen = {};
-
-			delete option.keylist;
-			delete option.vallist;
-
-			function add(value, label) {
-				if (value == null || seen[value])
-					return;
-
-				seen[value] = true;
-				option.value(value, label || value);
-			}
-
-			for (let i = 0; i < (builtins || []).length; i++)
-				add(builtins[i][0], builtins[i][1]);
-
-			uci.sections(data[0], 'dns_server', (res) => {
-				if (res['.name'] !== section_id && res.enabled === '1') {
-					add(res['.name'], res.label);
-					if (res.label && res.label !== res['.name'])
-						add(res.label, res.label);
-				}
-			});
-		}
+		const outboundChoices = (currentId) =>
+			hp.outboundNodeChoices(nodes, routing_nodes, currentId, routing_mode);
+		const addOutboundChoices = (option, currentId) => {
+			for (const choice of outboundChoices(currentId))
+				option.value(choice.value, choice.label);
+		};
 
 		m = new form.Map('homeproxy-ce', _('HomeProxy CE'),
 			_('The modern ImmortalWrt proxy platform for ARM64/AMD64.'));
@@ -432,11 +373,12 @@ return view.extend({
 		so = ss.option(form.ListValue, 'default_outbound', _('Default outbound'),
 			_('Default outbound for connections not matched by any routing rules.'));
 		so.load = function(section_id) {
-			loadOutboundChoices(this, [
-				['nil', _('Disable (the service)')],
-				['direct-out', _('Direct')],
-				['block-out', _('Block')]
-			], section_id);
+			delete this.keylist;
+			delete this.vallist;
+
+			this.value('nil', _('Disable (the service)'));
+			addOutboundChoices(this);
+			this.value('block-out', _('Block'));
 
 			return this.super('load', section_id);
 		}
@@ -446,10 +388,15 @@ return view.extend({
 		so = ss.option(form.ListValue, 'default_outbound_dns', _('Default outbound DNS'),
 			_('Default DNS server for resolving domain name in the server address.'));
 		so.load = function(section_id) {
-			loadDnsServerChoices(this, [
-				['default-dns', _('Default DNS (issued by WAN)')],
-				['system-dns', _('System DNS')]
-			], section_id);
+			delete this.keylist;
+			delete this.vallist;
+
+			this.value('default-dns', _('Default DNS (issued by WAN)'));
+			this.value('system-dns', _('System DNS'));
+			uci.sections(data[0], 'dns_server', (res) => {
+				if (res.enabled === '1')
+					this.value(res['.name'], res.label);
+			});
 
 			return this.super('load', section_id);
 		}
@@ -492,11 +439,16 @@ return view.extend({
 		so = ss.option(form.ListValue, 'domain_resolver', _('Domain resolver'),
 			_('For resolving domain name in the server address.'));
 		so.load = function(section_id) {
-			loadDnsServerChoices(this, [
-				['', _('Default')],
-				['default-dns', _('Default DNS (issued by WAN)')],
-				['system-dns', _('System DNS')]
-			], section_id);
+			delete this.keylist;
+			delete this.vallist;
+
+			this.value('', _('Default'));
+			this.value('default-dns', _('Default DNS (issued by WAN)'));
+			this.value('system-dns', _('System DNS'));
+			uci.sections(data[0], 'dns_server', (res) => {
+				if (res.enabled === '1')
+					this.value(res['.name'], res.label);
+			});
 
 			return this.super('load', section_id);
 		}
@@ -514,7 +466,7 @@ return view.extend({
 			_('The network interface to bind to.'));
 		so.multiple = false;
 		so.noaliases = true;
-		so.depends({'outbound': '', 'node': /^((?!urltest$).)+$/});
+		so.depends({'outbound': /^(?:|direct-out)$/, 'node': /^((?!urltest$).)+$/});
 		so.modalonly = true;
 
 		so = ss.option(form.ListValue, 'outbound', _('Outbound'),
@@ -741,9 +693,10 @@ return view.extend({
 		so = ss.taboption('field_other', form.ListValue, 'outbound', _('Outbound'),
 			_('Tag of the target outbound.'));
 		so.load = function(section_id) {
-			loadOutboundChoices(this, [
-				['direct-out', _('Direct')]
-			], section_id);
+			delete this.keylist;
+			delete this.vallist;
+
+			addOutboundChoices(this);
 
 			return this.super('load', section_id);
 		}
@@ -807,11 +760,16 @@ return view.extend({
 		so = ss.taboption('field_other', form.ListValue, 'resolve_server', _('DNS server'),
 			_('Specifies DNS server tag to use instead of selecting through DNS routing.'));
 		so.load = function(section_id) {
-			loadDnsServerChoices(this, [
-				['', _('Default')],
-				['default-dns', _('Default DNS (issued by WAN)')],
-				['system-dns', _('System DNS')]
-			], section_id);
+			delete this.keylist;
+			delete this.vallist;
+
+			this.value('', _('Default'));
+			this.value('default-dns', _('Default DNS (issued by WAN)'));
+			this.value('system-dns', _('System DNS'));
+			uci.sections(data[0], 'dns_server', (res) => {
+				if (res.enabled === '1')
+					this.value(res['.name'], res.label);
+			});
 
 			return this.super('load', section_id);
 		}
@@ -934,10 +892,15 @@ return view.extend({
 
 		so = ss.option(form.ListValue, 'default_server', _('Default DNS server'));
 		so.load = function(section_id) {
-			loadDnsServerChoices(this, [
-				['default-dns', _('Default DNS (issued by WAN)')],
-				['system-dns', _('System DNS')]
-			], section_id);
+			delete this.keylist;
+			delete this.vallist;
+
+			this.value('default-dns', _('Default DNS (issued by WAN)'));
+			this.value('system-dns', _('System DNS'));
+			uci.sections(data[0], 'dns_server', (res) => {
+				if (res.enabled === '1')
+					this.value(res['.name'], res.label);
+			});
 
 			return this.super('load', section_id);
 		}
@@ -1036,11 +999,16 @@ return view.extend({
 		so = ss.option(form.ListValue, 'address_resolver', _('Address resolver'),
 			_('Tag of a another server to resolve the domain name in the address. Required if address contains domain.'));
 		so.load = function(section_id) {
-			loadDnsServerChoices(this, [
-				['', _('None')],
-				['default-dns', _('Default DNS (issued by WAN)')],
-				['system-dns', _('System DNS')]
-			], section_id);
+			delete this.keylist;
+			delete this.vallist;
+
+			this.value('', _('None'));
+			this.value('default-dns', _('Default DNS (issued by WAN)'));
+			this.value('system-dns', _('System DNS'));
+			uci.sections(data[0], 'dns_server', (res) => {
+				if (res['.name'] !== section_id && res.enabled === '1')
+					this.value(res['.name'], res.label);
+			});
 
 			return this.super('load', section_id);
 		}
@@ -1070,9 +1038,10 @@ return view.extend({
 		so = ss.option(form.ListValue, 'outbound', _('Outbound'),
 			_('Tag of an outbound for connecting to the dns server.'));
 		so.load = function(section_id) {
-			loadOutboundChoices(this, [
-				['direct-out', _('Direct')]
-			], section_id);
+			delete this.keylist;
+			delete this.vallist;
+
+			addOutboundChoices(this);
 
 			return this.super('load', section_id);
 		}
@@ -1200,10 +1169,15 @@ return view.extend({
 		so = ss.taboption('field_other', form.ListValue, 'server', _('Server'),
 			_('Tag of the target dns server.'));
 		so.load = function(section_id) {
-			loadDnsServerChoices(this, [
-				['default-dns', _('Default DNS (issued by WAN)')],
-				['system-dns', _('System DNS')]
-			], section_id);
+			delete this.keylist;
+			delete this.vallist;
+
+			this.value('default-dns', _('Default DNS (issued by WAN)'));
+			this.value('system-dns', _('System DNS'));
+			uci.sections(data[0], 'dns_server', (res) => {
+				if (res.enabled === '1')
+					this.value(res['.name'], res.label);
+			});
 
 			return this.super('load', section_id);
 		}
@@ -1415,10 +1389,11 @@ return view.extend({
 		so = ss.option(form.ListValue, 'outbound', _('Outbound'),
 			_('Tag of the outbound to download rule set.'));
 		so.load = function(section_id) {
-			loadOutboundChoices(this, [
-				['', _('Default')],
-				['direct-out', _('Direct')]
-			], section_id);
+			delete this.keylist;
+			delete this.vallist;
+
+			this.value('', _('Default'));
+			addOutboundChoices(this);
 
 			return this.super('load', section_id);
 		}
@@ -1583,6 +1558,15 @@ return view.extend({
 		o = s.taboption('clash_api', form.SectionValue, '_experimental', form.NamedSection, 'experimental', 'homeproxy');
 		ss = o.subsection;
 		ss.anonymous = true;
+		const validateClashApiOption = function(section_id) {
+			if (!section_id)
+				return true;
+
+			return hp.validateClashApiAccess(
+				this.section.formvalue(section_id, 'external_controller'),
+				this.section.formvalue(section_id, 'secret')
+			);
+		};
 
 		so = ss.option(form.Flag, 'enable_clash_api', _('Enable Clash API'));
 		so.default = so.disabled;
@@ -1591,10 +1575,12 @@ return view.extend({
 		so = ss.option(form.Value, 'external_controller', _('External Controller'),
 			_('Listen address for Clash API, for example <code>0.0.0.0:9090</code>.'));
 		so.placeholder = '0.0.0.0:9090';
+		so.validate = validateClashApiOption;
 		so.depends('enable_clash_api', '1');
 
 		so = ss.option(form.Value, 'secret', _('Secret'));
 		so.password = true;
+		so.validate = validateClashApiOption;
 		so.depends('enable_clash_api', '1');
 
 		so = ss.option(form.Value, 'external_ui', _('External UI Path'));

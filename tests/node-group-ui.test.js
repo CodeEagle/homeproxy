@@ -37,6 +37,38 @@ test('findNodeGroupReferences returns groups that directly reference a node', ()
 	);
 });
 
+test('findNodeGroupReferences resolves a unique legacy label without guessing ambiguous labels', () => {
+	const legacyNodes = [
+		{ '.name': 'n1', label: '香港', type: 'vless' },
+		{ '.name': 'g1', label: '旧组', type: 'selector', outbounds: ['香港'] }
+	];
+	assert.deepEqual(
+		plain(hp.findNodeGroupReferences(legacyNodes, 'n1')).map((node) => node['.name']),
+		['g1']
+	);
+
+	const ambiguousNodes = [
+		...legacyNodes,
+		{ '.name': 'n2', label: '香港', type: 'trojan' }
+	];
+	assert.deepEqual(hp.findNodeGroupReferences(ambiguousNodes, 'n1'), []);
+});
+
+test('findNodeGroupReferencesForTargets deduplicates groups by group ID', () => {
+	const groupedNodes = [
+		{ '.name': 'n1', label: '一', type: 'vless' },
+		{ '.name': 'n2', label: '二', type: 'trojan' },
+		{ '.name': 'g1', label: '共享组', type: 'selector', outbounds: ['n1', 'n2'] }
+	];
+	assert.deepEqual(
+		plain(hp.findNodeGroupReferencesForTargets(groupedNodes, ['n1', 'n2'])).map((entry) => ({
+			targetId: entry.targetId,
+			groupId: entry.group['.name']
+		})),
+		[{ targetId: 'n1', groupId: 'g1' }]
+	);
+});
+
 test('validateNodeGroup accepts a non-empty group with a member default', () => {
 	assert.equal(hp.validateNodeGroup(nodes, nodes[3]), true);
 });

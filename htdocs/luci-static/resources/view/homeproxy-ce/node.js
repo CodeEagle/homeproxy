@@ -1600,19 +1600,11 @@ return view.extend({
 		o.onclick = function() {
 			let nodes = listNodeSections(data[0]);
 			let subnodes = nodes.filter((node) => node.grouphash).map((node) => node['.name']);
-			let references = [];
-
-			for (let targetId of subnodes) {
-				for (let group of hp.findNodeGroupReferences(nodes, targetId)) {
-					if (!references.some((reference) =>
-						reference.targetId === targetId && reference.groupId === group['.name']))
-						references.push({ targetId, groupId: group['.name'], label: group.label });
-				}
-			}
+			let references = hp.findNodeGroupReferencesForTargets(nodes, subnodes);
 
 			if (references.length) {
 				let groups = references.map((reference) =>
-					`${reference.label || reference.groupId} (${reference.groupId})`);
+					`${reference.group.label || reference.group['.name']} (${reference.group['.name']})`);
 				ui.addNotification(null, E('p', _('Cannot remove subscription nodes referenced by group(s): %s.')
 					.format(groups.join(', '))));
 				return false;

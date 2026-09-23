@@ -324,7 +324,7 @@ test('preserves routing metadata by applying it to group leaves, not the group o
 	};
 	const { applyRoutingNodeMetadata } = extractUcodeFunctions(
 		source,
-		['applyRoutingNodeMetadata'],
+		['routingMetadataEquivalent', 'applyRoutingNodeMetadata'],
 		runtime
 	);
 	assert.doesNotThrow(() => applyRoutingNodeMetadata('g1', {
@@ -344,6 +344,101 @@ test('preserves routing metadata by applying it to group leaves, not the group o
 	assert.equal(Object.hasOwn(runtime.generated_outbounds.g1, 'detour'), false);
 });
 
+test('reuses identical routing metadata for a nested WireGuard leaf', () => {
+	const routingNodes = [
+		{
+			'.name': 'r1',
+			bind_interface: 'wan',
+			outbound: 'direct-out',
+			domain_resolver: 'default-dns',
+			domain_strategy: 'prefer_ipv4'
+		},
+		{
+			'.name': 'r2',
+			bind_interface: 'wan',
+			outbound: 'direct-out',
+			domain_resolver: 'default-dns',
+			domain_strategy: 'prefer_ipv4'
+		}
+	];
+	const nestedNodes = [
+		{ '.name': 'wg1', label: 'WireGuard', type: 'wireguard' },
+		{ '.name': 'g1', label: 'Nested', type: 'selector', outbounds: ['wg1'] }
+	];
+	const nestedIndex = helpers.buildNodeReferenceIndex(nestedNodes);
+	const runtime = {
+		...context,
+		node_reference_index: nestedIndex,
+		generated_outbounds: {
+			g1: generate_outbound(nestedNodes[1], nestedIndex)
+		},
+		generated_endpoints: {
+			wg1: { type: 'wireguard', tag: 'cfg-wg1-out' }
+		},
+		get_outbound: (reference) => reference === 'direct-out' ? reference : `cfg-${reference}-out`,
+		get_resolver: (reference) => `cfg-${reference}-dns`,
+		outboundTag: (reference) => reference === 'direct-out' ? reference : `cfg-${reference}-out`,
+		config: { outbounds: [], endpoints: [] }
+	};
+	const { applyRoutingNodeMetadata } = extractUcodeFunctions(
+		source,
+		['routingMetadataEquivalent', 'applyRoutingNodeMetadata'],
+		runtime
+	);
+	const metadata = {};
+
+	for (const routingNode of routingNodes)
+		assert.doesNotThrow(() => applyRoutingNodeMetadata('g1', routingNode, {}, metadata));
+
+	assert.equal(runtime.generated_endpoints.wg1.bind_interface, 'wan');
+	assert.equal(runtime.generated_endpoints.wg1.detour, 'direct-out');
+	assert.deepEqual(plain(runtime.generated_endpoints.wg1.domain_resolver), {
+		server: 'cfg-default-dns-dns',
+		strategy: 'prefer_ipv4'
+	});
+});
+
+test('fails when routing metadata conflicts for a shared leaf', () => {
+	const nestedNodes = [
+		{ '.name': 'wg1', label: 'WireGuard', type: 'wireguard' },
+		{ '.name': 'g1', label: 'Nested', type: 'selector', outbounds: ['wg1'] }
+	];
+	const nestedIndex = helpers.buildNodeReferenceIndex(nestedNodes);
+	const runtime = {
+		...context,
+		node_reference_index: nestedIndex,
+		generated_outbounds: { g1: generate_outbound(nestedNodes[1], nestedIndex) },
+		generated_endpoints: { wg1: { type: 'wireguard', tag: 'cfg-wg1-out' } },
+		get_outbound: (reference) => reference === 'direct-out' ? reference : `cfg-${reference}-out`,
+		get_resolver: (reference) => `cfg-${reference}-dns`,
+		outboundTag: (reference) => reference === 'direct-out' ? reference : `cfg-${reference}-out`,
+		die: (message) => { throw new Error(message); },
+		config: { outbounds: [], endpoints: [] }
+	};
+	const { applyRoutingNodeMetadata } = extractUcodeFunctions(
+		source,
+		['routingMetadataEquivalent', 'applyRoutingNodeMetadata', 'formatRoutingMetadataConflict'],
+		runtime
+	);
+	const metadata = {};
+
+	assert.doesNotThrow(() => applyRoutingNodeMetadata('g1', {
+		'.name': 'r1',
+		bind_interface: 'wan',
+		outbound: 'direct-out'
+	}, {}, metadata));
+	assert.throws(
+		() => applyRoutingNodeMetadata('g1', {
+			'.name': 'r2',
+			bind_interface: 'lan',
+			outbound: 'direct-out'
+		}, {}, metadata),
+		(error) => error.message.includes('leaf_section=wg1') &&
+			error.message.includes('leaf_tag=cfg-wg1-out') &&
+			error.message.includes('routing_sections=r1,r2')
+	);
+});
+
 test('keeps the caller section when resolving an explicit detour fails', () => {
 	const { configuredOutboundTag } = extractUcodeFunctions(source, ['configuredOutboundTag'], {
 		isEmpty: (value) => !value,
@@ -359,6 +454,56 @@ test('keeps the caller section when resolving an explicit detour fails', () => {
 	assert.throws(
 		() => configuredOutboundTag('gone', 'external_ui_download_detour'),
 		/section=external_ui_download_detour.*reference=gone/
+	);
+});
+
+test('requires a generated legacy routing URLTest tag for explicit download detours', () => {
+	const buildHelpers = extractUcodeFunctions(
+		source,
+		['strictOutboundTag', 'buildExperimentalConfig'],
+		{
+			...context,
+			get_outbound: (reference) => `cfg-${reference}-out`,
+			has_outbound: (tags, tag) => !!(tag && tags[tag]),
+			formatNodeReferenceError: (result) =>
+				`invalid outbound reference: section=${result.section} reference=${result.reference}`
+		}
+	);
+	const baseOptions = {
+		run_dir: '/var/run/homeproxy-ce',
+		enable_clash_api: '1',
+		external_controller: '127.0.0.1:9090',
+		external_ui_download_detour: 'legacy-auto'
+	};
+
+	assert.doesNotThrow(() => buildHelpers.buildExperimentalConfig(
+		baseOptions,
+		{ 'direct-out': true, 'cfg-legacy-auto-out': true }
+	));
+	for (const [mode, generatedTags] of Object.entries({
+		main: { 'direct-out': true },
+		disabled: { 'direct-out': true }
+	}))
+		assert.throws(
+			() => buildHelpers.buildExperimentalConfig(baseOptions, generatedTags),
+			(error) => error.message.includes('section=external_ui_download_detour') &&
+				error.message.includes('reference=cfg-legacy-auto-out'),
+			mode
+		);
+
+	const missingHelpers = extractUcodeFunctions(
+		source,
+		['strictOutboundTag', 'buildExperimentalConfig'],
+		{
+			...context,
+			get_outbound: () => { throw new Error('section=external_ui_download_detour reference=missing-routing'); },
+			has_outbound: (tags, tag) => !!(tag && tags[tag]),
+			formatNodeReferenceError: () => 'unused'
+		}
+	);
+	assert.throws(
+		() => missingHelpers.buildExperimentalConfig(baseOptions, { 'direct-out': true }),
+		/section=external_ui_download_detour.*reference=missing-routing/
 	);
 });
 

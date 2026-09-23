@@ -1,7 +1,7 @@
 # HomeProxy CE Selector、URLTest 与 Clash UI 移植设计
 
-日期：2026-09-23  
-目标分支：`CodeEagle/homeproxy` 的 `dev`（`luci-app-homeproxy-ce`）  
+日期：2026-09-23
+目标分支：`CodeEagle/homeproxy` 的 `dev`（`luci-app-homeproxy-ce`）
 参考实现：`bulianglin/homeproxy@8d021bf`（`support clash mode`）
 
 ## 目标

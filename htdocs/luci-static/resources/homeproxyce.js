@@ -32,6 +32,24 @@ function nodeDisplayName(node, id) {
 	return (node && (node.label || node['.name'])) || id;
 }
 
+function clashControllerHost(controller) {
+	let value = String(controller || '').trim().replace(/^[a-z][a-z0-9+.-]*:\/\//i, '');
+	if (value[0] === '[') {
+		let closingBracket = value.indexOf(']');
+		return closingBracket > 0 ? value.slice(1, closingBracket) : value;
+	}
+
+	let lastColon = value.lastIndexOf(':');
+	return lastColon > -1 && value.indexOf(':') === lastColon
+		? value.slice(0, lastColon)
+		: value;
+}
+
+function isLoopbackClashController(controller) {
+	let host = clashControllerHost(controller).toLowerCase().replace(/\.$/, '');
+	return ['127.0.0.1', '::1', 'localhost'].includes(host);
+}
+
 function buildNodeReferenceIndex(nodes) {
 	const index = {
 		byId: Object.create(null),
@@ -245,18 +263,29 @@ return baseclass.extend({
 			.map((node) => ({ value: node['.name'], label: node.label || node['.name'] }));
 	},
 
-	outboundNodeChoices(nodes, routingNodes, currentId) {
+	validateClashApiAccess(externalController, secret) {
+		if (!String(externalController || '').trim() || String(secret || '').trim())
+			return true;
+
+		if (isLoopbackClashController(externalController))
+			return true;
+
+		return _('A secret is required when the Clash API listens on a non-loopback address.');
+	},
+
+	outboundNodeChoices(nodes, routingNodes, currentId, routingMode = 'custom') {
 		const choices = [{ value: 'direct-out', label: _('Direct') }];
 		const seen = new Set(['direct-out']);
 
-		for (const routingNode of routingNodes || []) {
-			const id = routingNode?.['.name'];
-			if (!id || id === currentId || routingNode.enabled !== '1' || seen.has(id))
-				continue;
+		if (routingMode === 'custom')
+			for (const routingNode of routingNodes || []) {
+				const id = routingNode?.['.name'];
+				if (!id || id === currentId || routingNode.enabled !== '1' || seen.has(id))
+					continue;
 
-			choices.push({ value: id, label: nodeDisplayName(routingNode, id) });
-			seen.add(id);
-		}
+				choices.push({ value: id, label: nodeDisplayName(routingNode, id) });
+				seen.add(id);
+			}
 
 		for (const node of nodes || []) {
 			const id = node?.['.name'];
@@ -271,8 +300,30 @@ return baseclass.extend({
 	},
 
 	findNodeGroupReferences(nodes, targetId) {
+		const index = buildNodeReferenceIndex(nodes);
 		return (nodes || []).filter((node) =>
-			isNodeGroup(node) && asNodeList(node.outbounds).includes(targetId));
+			isNodeGroup(node) && asNodeList(node.outbounds).some((reference) => {
+				const resolved = resolveNodeReference(index, reference);
+				return resolved.status === 'ok' && resolved.id === targetId;
+			}));
+	},
+
+	findNodeGroupReferencesForTargets(nodes, targetIds) {
+		const references = [];
+		const seen = new Set();
+
+		for (const targetId of targetIds || []) {
+			for (const group of this.findNodeGroupReferences(nodes, targetId)) {
+				const groupId = group['.name'];
+				if (seen.has(groupId))
+					continue;
+
+				seen.add(groupId);
+				references.push({ targetId, group });
+			}
+		}
+
+		return references;
 	},
 
 	validateNodeGroup(nodes, group) {
