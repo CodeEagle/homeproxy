@@ -8,7 +8,9 @@
 'use strict';
 
 import { cursor } from 'uci';
-import { isEmpty, parseURL, validation } from 'homeproxy';
+import {
+	isEmpty, parseURL, validation, buildNodeReferenceIndex, resolveNodeReference
+} from 'homeproxy';
 
 const uci = cursor();
 
@@ -26,6 +28,82 @@ const uciinfra = 'infra',
       uciroutingnode = 'routing_node',
       uciroutingrule = 'routing_rule',
       uciserver = 'server';
+
+function migrateNodeGroupReferences(uci, config) {
+	let nodes = [],
+		changed_groups = [],
+		diagnostics = [];
+
+	uci.foreach(config, 'node', (cfg) => {
+		nodes[length(nodes)] = cfg;
+	});
+
+	const node_index = buildNodeReferenceIndex(nodes);
+
+	function recordDiagnostic(section, result) {
+		const diagnostic = {
+			section,
+			status: result.status,
+			reference: result.reference
+		};
+		if (result.matches)
+			diagnostic.matches = result.matches;
+		diagnostics[length(diagnostics)] = diagnostic;
+		warn(`Unable to resolve node group reference: section=${section} ` +
+			`reference=${result.reference} status=${result.status}`);
+	}
+
+	uci.foreach(config, 'node', (cfg) => {
+		if (cfg.type !== 'selector' && cfg.type !== 'urltest')
+			return null;
+
+		let changed = false,
+			outbounds = [];
+		const references = cfg.outbounds || [];
+		for (let i = 0; i < length(references); i++) {
+			const reference = references[i];
+			const resolved = resolveNodeReference(node_index, reference);
+			if (resolved.status === 'ok') {
+				outbounds[length(outbounds)] = resolved.id;
+				if (resolved.id !== reference)
+					changed = true;
+			} else {
+				outbounds[length(outbounds)] = reference;
+				resolved.reference = reference;
+				recordDiagnostic(cfg['.name'], resolved);
+			}
+		}
+
+		if (changed) {
+			uci.set(config, cfg['.name'], 'outbounds', outbounds);
+			changed_groups[length(changed_groups)] = cfg['.name'];
+		}
+
+		if (!cfg.default)
+			return null;
+
+		const resolved_default = resolveNodeReference(node_index, cfg.default);
+		if (resolved_default.status === 'ok') {
+			if (resolved_default.id !== cfg.default) {
+				uci.set(config, cfg['.name'], 'default', resolved_default.id);
+				let known = false;
+				for (let i = 0; i < length(changed_groups); i++) {
+					if (changed_groups[i] === cfg['.name']) {
+						known = true;
+						break;
+					}
+				}
+				if (!known)
+					changed_groups[length(changed_groups)] = cfg['.name'];
+			}
+		} else {
+			resolved_default.reference = cfg.default;
+			recordDiagnostic(cfg['.name'], resolved_default);
+		}
+	});
+
+	return { changed_groups, diagnostics };
+}
 
 /* chinadns-ng has been removed */
 if (uci.get(uciconfig, uciinfra, 'china_dns_port'))
@@ -205,6 +283,8 @@ uci.foreach(uciconfig, ucinode, (cfg) => {
 	if (!isEmpty(cfg.wireguard_gso))
 		uci.delete(uciconfig, cfg['.name'], 'wireguard_gso');
 });
+
+migrateNodeGroupReferences(uci, uciconfig);
 
 /* routing rules options */
 uci.foreach(uciconfig, uciroutingrule, (cfg) => {

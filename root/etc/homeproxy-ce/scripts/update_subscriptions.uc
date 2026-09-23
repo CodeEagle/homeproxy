@@ -481,6 +481,84 @@ function parse_uri(uri) {
 	return config;
 }
 
+function cleanRemovedNodeReferences(uci, config, removed_ids) {
+	let removed = {},
+		changed_groups = [],
+		empty_groups = [];
+
+	for (let i = 0; i < length(removed_ids || []); i++)
+		removed[removed_ids[i]] = true;
+
+	function cleanUrltestList(section, option, references) {
+		let filtered = [],
+			changed = false;
+		for (let i = 0; i < length(references || []); i++) {
+			const reference = references[i];
+			if (removed[reference]) {
+				changed = true;
+				log('Node ' + reference + ' is gone, removing from urltest list.');
+				continue;
+			}
+			filtered[length(filtered)] = reference;
+		}
+
+		if (changed)
+			uci.set(config, section, option, filtered);
+
+		return changed;
+	}
+
+	cleanUrltestList(
+		'config',
+		'main_urltest_nodes',
+		uci.get(config, 'config', 'main_urltest_nodes')
+	);
+	cleanUrltestList(
+		'config',
+		'main_udp_urltest_nodes',
+		uci.get(config, 'config', 'main_udp_urltest_nodes')
+	);
+	uci.foreach(config, 'routing_node', (cfg) => {
+		if (cfg.node === 'urltest')
+			cleanUrltestList(cfg['.name'], 'urltest_nodes', cfg.urltest_nodes);
+	});
+
+	uci.foreach(config, 'node', (cfg) => {
+		if (cfg.type !== 'selector' && cfg.type !== 'urltest')
+			return null;
+
+		let outbounds = [],
+			changed = false;
+		const references = cfg.outbounds || [];
+		for (let i = 0; i < length(references); i++) {
+			const reference = references[i];
+			if (removed[reference]) {
+				changed = true;
+				continue;
+			}
+			outbounds[length(outbounds)] = reference;
+		}
+
+		const default_removed = cfg.default && removed[cfg.default];
+		if (!changed && !default_removed)
+			return null;
+
+		if (changed)
+			uci.set(config, cfg['.name'], 'outbounds', outbounds);
+		if (default_removed)
+			uci.delete(config, cfg['.name'], 'default');
+
+		changed_groups[length(changed_groups)] = cfg['.name'];
+		if (changed && !length(outbounds)) {
+			empty_groups[length(empty_groups)] = cfg['.name'];
+			log('Outbound group ' + cfg['.name'] + ' (' + (cfg.label || cfg['.name']) +
+				') is empty after removing nodes.');
+		}
+	});
+
+	return { changed_groups, empty_groups };
+}
+
 function main() {
 	if (via_proxy !== '1') {
 		log('Stopping service...');
@@ -562,7 +640,7 @@ function main() {
 		return false;
 	}
 
-	let added = 0, removed = 0;
+	let added = 0, removed = 0, removed_node_ids = [];
 	uci.foreach(uciconfig, ucinode, (cfg) => {
 		/* Nodes created by the user */
 		if (!cfg.grouphash)
@@ -574,6 +652,7 @@ function main() {
 
 		if (!node_cache[cfg.grouphash] || !node_cache[cfg.grouphash][cfg['.name']]) {
 			uci.delete(uciconfig, cfg['.name']);
+			removed_node_ids[length(removed_node_ids)] = cfg['.name'];
 			removed++;
 
 			log(sprintf('Removing node: %s.', cfg.label || cfg['name']));
@@ -587,6 +666,7 @@ function main() {
 			node_cache[cfg.grouphash][cfg['.name']].isExisting = true;
 		}
 	});
+	cleanRemovedNodeReferences(uci, uciconfig, removed_node_ids);
 	for (let nodes in node_result)
 		map(nodes, (node) => {
 			if (node.isExisting)
