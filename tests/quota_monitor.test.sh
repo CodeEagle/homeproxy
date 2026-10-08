@@ -42,6 +42,10 @@ while [ "$#" -gt 0 ]; do
 	case "$1" in
 		--output|-o) output=$2; shift 2 ;;
 		--dump-header|-D) headers=$2; shift 2 ;;
+		--compressed)
+			[ "${QUOTA_TEST_REJECT_COMPRESSED:-0}" = 1 ] && exit 2
+			shift
+			;;
 		--write-out|-w) shift 2 ;;
 		--proxy) proxy=$2; shift 2 ;;
 		--noproxy) shift 2 ;;
@@ -193,6 +197,7 @@ write_responses() {
 write_responses rx1 healthy
 write_responses rx2 healthy
 write_responses rx4 healthy
+export QUOTA_TEST_REJECT_COMPRESSED=1
 QUOTA_HP_ROOT="$TEST_ROOT/etc/homeproxy-ce" QUOTA_RUN_ROOT="$TEST_ROOT/run" QUOTA_STATE_FILE="$TEST_ROOT/etc/homeproxy-ce/quota-state" QUOTA_EVENT_FILE="$TEST_ROOT/etc/homeproxy-ce/quota-events" QUOTA_RUNTIME_FILE="$TEST_ROOT/run/quota-status" QUOTA_FLOCK_BIN="$(command -v flock)" "$TEST_ROOT/quota_monitor.sh" --enable >/dev/null
 run_monitor
 output=$(status_monitor)

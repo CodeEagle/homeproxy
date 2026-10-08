@@ -207,7 +207,7 @@ probe_url() {
 }
 
 curl_common() {
-	"$CURL_BIN" --silent --show-error --location --compressed \
+	"$CURL_BIN" --silent --show-error --location \
 		--connect-timeout 4 --max-time 10 \
 		--user-agent "$USER_AGENT" \
 		--header 'Cache-Control: no-cache' \
