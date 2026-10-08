@@ -3132,5 +3132,29 @@ msgstr "有效端口值"
 msgid "valid uuid"
 msgstr "有效 uuid"
 
+msgid "Sync subscription members"
+msgstr "自动同步订阅成员"
+
+msgid "Add and remove members automatically when the selected subscriptions update. Manually added members are preserved."
+msgstr "所选订阅更新时自动增减组成员，保留手动添加的成员。"
+
+msgid "Subscription sources"
+msgstr "订阅来源"
+
+msgid "Select at least one subscription source."
+msgstr "请至少选择一个订阅来源。"
+
+msgid "Subscription address family"
+msgstr "订阅地址类型"
+
+msgid "All addresses"
+msgstr "全部地址"
+
+msgid "IPv4 addresses"
+msgstr "IPv4 地址"
+
+msgid "IPv6 addresses"
+msgstr "IPv6 地址"
+
 #~ msgid "Grant access to homeproxy configuration"
 #~ msgstr "授予 homeproxy 访问 UCI 配置的权限"

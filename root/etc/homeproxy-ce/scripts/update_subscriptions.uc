@@ -63,7 +63,8 @@ function filter_check(name) {
 
 /* Common var start */
 const node_cache = {},
-      node_result = [];
+      node_result = [],
+      active_subscription_sources = {};
 
 const ubus = connect();
 const sing_features = ubus.call('luci.homeproxyce', 'singbox_get_features', {}) || {};
@@ -481,6 +482,255 @@ function parse_uri(uri) {
 	return config;
 }
 
+function subscriptionNodeValueEqual(left, right) {
+	if (isEmpty(left) && isEmpty(right))
+		return true;
+
+	if (type(left) === 'array' || type(right) === 'array') {
+		if (type(left) !== 'array' || type(right) !== 'array' || length(left) !== length(right))
+			return false;
+
+		for (let i = 0; i < length(left); i++)
+			if (!subscriptionNodeValueEqual(left[i], right[i]))
+				return false;
+
+		return true;
+	}
+
+	/* UCI scalar values are strings; URI/JSON parsers may leave numbers typed. */
+	return sprintf('%s', left) === sprintf('%s', right);
+}
+
+function sameSubscriptionNode(left, right) {
+	const ignored = {
+		'.name': true,
+		'.type': true,
+		label: true,
+		grouphash: true,
+		isExisting: true
+	};
+
+	for (let key in left) {
+		if (ignored[key])
+			continue;
+		if (!subscriptionNodeValueEqual(left[key], right[key]))
+			return false;
+	}
+
+	for (let key in right) {
+		if (ignored[key])
+			continue;
+		if (!subscriptionNodeValueEqual(left[key], right[key]))
+			return false;
+	}
+
+	return true;
+}
+
+function subscriptionNodeChanged(left, right) {
+	const ignored = {
+		'.name': true,
+		'.type': true,
+		isExisting: true
+	};
+
+	for (let key in left) {
+		if (ignored[key])
+			continue;
+		if (!subscriptionNodeValueEqual(left[key], right[key]))
+			return true;
+	}
+
+	for (let key in right) {
+		if (ignored[key])
+			continue;
+		if (!subscriptionNodeValueEqual(left[key], right[key]))
+			return true;
+	}
+
+	return false;
+}
+
+function findSubscriptionNode(cache, cfg) {
+	if (!cache)
+		return null;
+
+	const keyed_candidate = cache[cfg['.name']];
+	if (keyed_candidate && !keyed_candidate.isExisting &&
+		sameSubscriptionNode(cfg, keyed_candidate))
+		return keyed_candidate;
+
+	for (let key in cache) {
+		const candidate = cache[key];
+		if (type(candidate) !== 'object' || candidate.isExisting)
+			continue;
+		if (sameSubscriptionNode(cfg, candidate))
+			return candidate;
+	}
+
+	/* Keep the old section ID when its label/hash is unchanged but parameters changed. */
+	if (keyed_candidate && !keyed_candidate.isExisting)
+		return keyed_candidate;
+
+	return null;
+}
+
+function subscriptionNodeSectionId(label, used_ids) {
+	let id = md5hex(label),
+		suffix = 0;
+
+	while (used_ids[id])
+		id = md5hex(label + '.' + (++suffix));
+
+	used_ids[id] = true;
+	return id;
+}
+
+function subscriptionList(value) {
+	if (isEmpty(value))
+		return [];
+
+	return type(value) === 'array' ? value : [value];
+}
+
+function subscriptionNodeMatchesFamily(node, family) {
+	if (family === 'ipv4')
+		return validation('ip4addr', node.address);
+	if (family === 'ipv6')
+		return validation('ip6addr', node.address);
+
+	return true;
+}
+
+function syncSubscriptionGroupMembers(uci, config, active_sources) {
+	let nodes = [],
+		nodes_by_id = {},
+		changed_groups = [],
+		empty_groups = [];
+
+	uci.foreach(config, 'node', (cfg) => {
+		nodes[length(nodes)] = cfg;
+		nodes_by_id[cfg['.name']] = cfg;
+	});
+
+	function hasSource(sources, source) {
+		for (let i = 0; i < length(sources); i++)
+			if (sources[i] === source)
+				return true;
+
+		return false;
+	}
+
+	uci.foreach(config, 'node', (cfg) => {
+		if ((cfg.type !== 'selector' && cfg.type !== 'urltest') || cfg.subscription_sync !== '1')
+			return null;
+
+		const sources = subscriptionList(cfg.subscription_source);
+		if (!length(sources))
+			return null;
+
+		let source_active = false;
+		for (let i = 0; i < length(sources); i++) {
+			if (active_sources[sources[i]]) {
+				source_active = true;
+				break;
+			}
+		}
+		if (!source_active)
+			return null;
+
+		const family = cfg.subscription_family || 'all';
+		let managed_nodes = [];
+		for (let i = 0; i < length(nodes); i++) {
+			const node = nodes[i];
+			if (node['.name'] === cfg['.name'] || !node.grouphash ||
+				!active_sources[node.grouphash] || !hasSource(sources, node.grouphash) ||
+				!subscriptionNodeMatchesFamily(node, family))
+				continue;
+
+			managed_nodes[length(managed_nodes)] = node;
+		}
+
+		let outbounds = [],
+			seen = {},
+			changed = false;
+		const references = cfg.outbounds || [];
+		for (let i = 0; i < length(references); i++) {
+			const reference = references[i];
+			const node = nodes_by_id[reference];
+			if (node && node.grouphash && hasSource(sources, node.grouphash) &&
+				active_sources[node.grouphash] && !subscriptionNodeMatchesFamily(node, family)) {
+				changed = true;
+				continue;
+			}
+
+			outbounds[length(outbounds)] = reference;
+			seen[reference] = true;
+		}
+
+		for (let i = 0; i < length(managed_nodes); i++) {
+			const id = managed_nodes[i]['.name'];
+			if (seen[id])
+				continue;
+
+			outbounds[length(outbounds)] = id;
+			seen[id] = true;
+			changed = true;
+		}
+
+		let default_valid = false;
+		if (cfg.default) {
+			for (let i = 0; i < length(outbounds); i++) {
+				if (outbounds[i] === cfg.default) {
+					default_valid = true;
+					break;
+				}
+			}
+			if (!default_valid) {
+				uci.delete(config, cfg['.name'], 'default');
+				changed = true;
+			}
+		}
+
+		if (!changed)
+			return null;
+
+		if (length(outbounds))
+			uci.set(config, cfg['.name'], 'outbounds', outbounds);
+		else
+			uci.delete(config, cfg['.name'], 'outbounds');
+
+		changed_groups[length(changed_groups)] = cfg['.name'];
+		if (!length(outbounds)) {
+			empty_groups[length(empty_groups)] = cfg['.name'];
+			log('Outbound group ' + cfg['.name'] + ' (' + (cfg.label || cfg['.name']) +
+				') is empty after subscription synchronization.');
+		}
+	});
+
+	return { changed_groups, empty_groups };
+}
+
+function findEmptySubscriptionGroups(uci, config, changed_groups) {
+	let empty_groups = [],
+		seen = {};
+
+	for (let i = 0; i < length(changed_groups || []); i++) {
+		const name = changed_groups[i];
+		if (seen[name])
+			continue;
+		seen[name] = true;
+
+		const cfg = uci.get_all(config, name);
+		if (!cfg || (cfg.type !== 'selector' && cfg.type !== 'urltest'))
+			continue;
+		if (!length(cfg.outbounds || []))
+			empty_groups[length(empty_groups)] = name;
+	}
+
+	return empty_groups;
+}
+
 function cleanRemovedNodeReferences(uci, config, removed_ids) {
 	let removed = {},
 		changed_groups = [],
@@ -633,8 +883,10 @@ function main() {
 
 		if (count == 0)
 			log(sprintf('No valid node found in %s.', url));
-		else
+		else {
+			active_subscription_sources[groupHash] = true;
 			log(sprintf('Successfully fetched %s nodes of total %s from %s.', count, length(nodes), url));
+		}
 	}
 
 	if (isEmpty(node_result)) {
@@ -648,8 +900,11 @@ function main() {
 		return false;
 	}
 
-	let added = 0, removed = 0, removed_node_ids = [];
+	let added = 0, removed = 0, removed_node_ids = [], subscription_changed = false,
+		node_ids = {};
 	uci.foreach(uciconfig, ucinode, (cfg) => {
+		node_ids[cfg['.name']] = true;
+
 		/* Nodes created by the user */
 		if (!cfg.grouphash)
 			return null;
@@ -658,38 +913,72 @@ function main() {
 		if (length(node_cache[cfg.grouphash]) === 0)
 			return null;
 
-		if (!node_cache[cfg.grouphash] || !node_cache[cfg.grouphash][cfg['.name']]) {
+		const cached_node = findSubscriptionNode(node_cache[cfg.grouphash], cfg);
+		if (!cached_node) {
 			uci.delete(uciconfig, cfg['.name']);
+			delete node_ids[cfg['.name']];
 			removed_node_ids[length(removed_node_ids)] = cfg['.name'];
 			removed++;
 
 			log(sprintf('Removing node: %s.', cfg.label || cfg['name']));
+			subscription_changed = true;
 		} else {
+			if (subscriptionNodeChanged(cfg, cached_node))
+				subscription_changed = true;
+
 			map(keys(cfg), (v) => {
-				if (v in node_cache[cfg.grouphash][cfg['.name']])
-					uci.set(uciconfig, cfg['.name'], v, node_cache[cfg.grouphash][cfg['.name']][v]);
-				else
+				if (v === '.name' || v === '.type')
+					return null;
+				if (!(v in cached_node))
 					uci.delete(uciconfig, cfg['.name'], v);
 			});
-			node_cache[cfg.grouphash][cfg['.name']].isExisting = true;
+			map(keys(cached_node), (v) => {
+				if (v !== 'isExisting')
+					uci.set(uciconfig, cfg['.name'], v, cached_node[v]);
+			});
+			cached_node.isExisting = true;
 		}
 	});
-	cleanRemovedNodeReferences(uci, uciconfig, removed_node_ids);
+	const cleaned_groups = cleanRemovedNodeReferences(uci, uciconfig, removed_node_ids);
+	if (length(cleaned_groups.changed_groups))
+		subscription_changed = true;
 	for (let nodes in node_result)
 		map(nodes, (node) => {
 			if (node.isExisting)
 				return null;
 
-			const nameHash = md5hex(node.label);
+			const nameHash = subscriptionNodeSectionId(node.label, node_ids);
 			uci.set(uciconfig, nameHash, 'node');
 			map(keys(node), (v) => uci.set(uciconfig, nameHash, v, node[v]));
 
 			added++;
+			subscription_changed = true;
 			log(sprintf('Adding node: %s.', node.label));
 		});
+	const synced_groups = syncSubscriptionGroupMembers(
+		uci,
+		uciconfig,
+		active_subscription_sources
+	);
+	if (length(synced_groups.changed_groups))
+		subscription_changed = true;
+	let changed_groups = [];
+	for (let group in cleaned_groups.changed_groups)
+		changed_groups[length(changed_groups)] = group;
+	for (let group in synced_groups.changed_groups)
+		changed_groups[length(changed_groups)] = group;
+	const empty_groups = findEmptySubscriptionGroups(uci, uciconfig, changed_groups);
+	if (length(empty_groups)) {
+		log(sprintf('Aborting subscription update because outbound group(s) became empty: %J.', empty_groups));
+		if (via_proxy !== '1') {
+			log('Starting service with the previous configuration...');
+			service_action('start');
+		}
+		return false;
+	}
 	uci.commit(uciconfig);
 
-	let need_restart = (via_proxy !== '1');
+	let need_restart = (via_proxy !== '1') || subscription_changed;
 	if (!isEmpty(main_node)) {
 		const first_server = uci.get_first(uciconfig, ucinode);
 		if (first_server) {

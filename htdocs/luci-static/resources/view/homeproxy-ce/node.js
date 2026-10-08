@@ -473,7 +473,7 @@ function guardNodeSectionRemoval(section, config) {
 	};
 }
 
-function renderNodeSettings(section, data, features, main_node, routing_mode) {
+function renderNodeSettings(section, data, features, main_node, routing_mode, subinfo) {
 	let s = section, o;
 	s.rowcolors = true;
 	s.sortable = true;
@@ -531,6 +531,34 @@ function renderNodeSettings(section, data, features, main_node, routing_mode) {
 	o.value('selector', _('Selector'));
 	o.value('urltest', _('URLTest'));
 	o.rmempty = false;
+
+	o = s.option(form.Flag, 'subscription_sync', _('Sync subscription members'),
+		_('Add and remove members automatically when the selected subscriptions update. Manually added members are preserved.'));
+	o.depends('type', 'selector');
+	o.depends('type', 'urltest');
+	o.default = '0';
+	o.modalonly = true;
+
+	o = s.option(form.MultiValue, 'subscription_source', _('Subscription sources'));
+	o.multiple = true;
+	for (const info of subinfo)
+		o.value(info.hash, info.title);
+	o.depends({ type: 'selector', subscription_sync: '1' });
+	o.depends({ type: 'urltest', subscription_sync: '1' });
+	o.validate = function(section_id, value) {
+		return hp.nodeGroupMultiValue(value).length ? true : _('Select at least one subscription source.');
+	};
+	o.rmempty = false;
+	o.modalonly = true;
+
+	o = s.option(form.ListValue, 'subscription_family', _('Subscription address family'));
+	o.value('all', _('All addresses'));
+	o.value('ipv4', _('IPv4 addresses'));
+	o.value('ipv6', _('IPv6 addresses'));
+	o.default = 'all';
+	o.depends({ type: 'selector', subscription_sync: '1' });
+	o.depends({ type: 'urltest', subscription_sync: '1' });
+	o.modalonly = true;
 
 	o = s.option(form.MultiValue, 'outbounds', _('Outbounds'),
 		_('Nodes and groups used by this outbound group.'));
@@ -1379,7 +1407,7 @@ return view.extend({
 		/* User nodes start */
 		s.tab('node', _('Nodes'));
 		o = s.taboption('node', form.SectionValue, '_node', form.GridSection, 'node');
-		ss = renderNodeSettings(o.subsection, data, features, main_node, routing_mode);
+		ss = renderNodeSettings(o.subsection, data, features, main_node, routing_mode, subinfo);
 		ss.addremove = true;
 		ss.filter = function(section_id) {
 			for (let info of subinfo)
@@ -1484,7 +1512,7 @@ return view.extend({
 		for (const info of subinfo) {
 			s.tab('sub_' + info.hash, _('Sub (%s)').format(info.title));
 			o = s.taboption('sub_' + info.hash, form.SectionValue, '_sub_' + info.hash, form.GridSection, 'node');
-			ss = renderNodeSettings(o.subsection, data, features, main_node, routing_mode);
+			ss = renderNodeSettings(o.subsection, data, features, main_node, routing_mode, subinfo);
 			ss.filter = function(section_id) {
 				return (uci.get(data[0], section_id, 'grouphash') === info.hash);
 			}

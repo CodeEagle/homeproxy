@@ -6,6 +6,7 @@ const path = require('node:path');
 const test = require('node:test');
 
 const { loadLuCIModule } = require('./helpers/load-luci-module');
+const { extractUcodeFunctions } = require('./helpers/extract-ucode-functions');
 
 const hp = loadLuCIModule();
 const nodeViewSource = fs.readFileSync(
@@ -18,6 +19,33 @@ const nodes = [
 	{ '.name': 'g1', label: '自动', type: 'urltest', outbounds: ['n1', 'n2'] },
 	{ '.name': 'g2', label: '手动', type: 'selector', outbounds: ['g1', 'n2'], default: 'n2' }
 ];
+
+test('subscription group controls use source IDs and validate LuCI multi-value submissions', () => {
+	const options = {};
+	const section = {
+		option(kind, name) {
+			const option = { choices: [], dependencies: [],
+				value(...args) { this.choices.push(args); },
+				depends(...args) { this.dependencies.push(args); }
+			};
+			options[name] = option;
+			return option;
+		}
+	};
+	const { renderNodeSettings } = extractUcodeFunctions(nodeViewSource, ['renderNodeSettings'], {
+		hp, form: {}, _: (value) => Object.assign(new String(value), { format: () => value }),
+		L: { bind: () => () => {} },
+		guardNodeSectionRemoval: () => {}, allowInsecureConfirm: () => {}
+	});
+	renderNodeSettings(section, ['homeproxy-ce'], {}, null, 'custom', [
+		{ hash: 'source-hash', title: 'RX78-1' }
+	]);
+	assert.deepEqual(plain(options.subscription_source.choices), [['source-hash', 'RX78-1']]);
+	assert.equal(options.subscription_source.validate('group', ['source-hash']), true);
+	assert.equal(options.subscription_source.validate('group', 'source-hash'), true);
+	assert.match(String(options.subscription_source.validate('group', '')), /at least one/);
+	assert.deepEqual(plain(options.subscription_family.choices).map(([value]) => value), ['all', 'ipv4', 'ipv6']);
+});
 
 function plain(value) {
 	return JSON.parse(JSON.stringify(value));

@@ -7,7 +7,7 @@ on:
   push:
     branches:
       - 'master'
-      - 'dev'
+      - 'codex/port-homeproxy-ui-router-6-1'
     paths:
       - 'htdocs/**'
       - 'po/**'
@@ -19,7 +19,7 @@ on:
   pull_request:
     branches:
       - 'master'
-      - 'dev'
+      - 'codex/port-homeproxy-ui-router-6-1'
     types:
       - opened
       - synchronize

@@ -189,6 +189,30 @@ outbound 归一化和 sing-box 版本兼容逻辑。
 LuCI 手动删除节点时使用相同引用检查：节点仍被组引用时阻止删除，并列出引用组。用户必须先
 显式修改相关组；删除动作本身不隐式重写其他配置。
 
+### 订阅动态组绑定（设计）
+
+需要跟随订阅完整节点集的 selector/urltest 才声明动态绑定；未声明的组始终保留用户手动成员。
+绑定使用节点 section 上的 `option subscription_sync '1'`、`option subscription_family
+'ipv4|ipv6|all'` 和一个或多个 `list subscription_source '<grouphash>'`。`grouphash` 是去掉 URL
+片段后的订阅地址 MD5，与 `update_subscriptions.uc` 使用的值相同；例如一个 IPv4 自动组写成：
+
+```uci
+config node 'auto_ipv4'
+	option type 'urltest'
+	option subscription_sync '1'
+	option subscription_family 'ipv4'
+	list subscription_source '<md5(subscription-url-without-fragment)>'
+```
+
+`ipv4`/`ipv6` 只匹配 `address` 的字面量地址（分别复用 `validation('ip4addr', ...)` 和
+`validation('ip6addr', ...)`）；域名地址仅在 `all` 下参与同步。成功抓取某个绑定源时，只同步该源且符合 family 的直接节点：新增节点加入，已消失节点移除，组内
+手动添加的其他源或组引用保持不变。抓取失败或结果没有有效节点时保留原成员，避免临时网络错误清空
+组；移除后若 `default` 不再是成员则删除它，让 sing-box 选择第一个有效成员。若本次同步会使
+selector/urltest 为空，则放弃提交并保留更新前配置（`update_via_proxy=1` 时保持运行中的旧配置，
+否则重新启动旧配置）；预先存在的空组仍由生成器报告可诊断的错误。只选少量节点的媒体/区域组不设置 `subscription_sync`，
+因此不会因同一来源的其他节点出现而被扩展。LuCI 保存绑定选项时不立即改写 `outbounds`，配置会在
+下一次订阅更新成功后生效。
+
 ## 迁移
 
 `migrate_config.uc` 增加幂等迁移：
