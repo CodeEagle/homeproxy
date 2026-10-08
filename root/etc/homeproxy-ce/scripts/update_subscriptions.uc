@@ -586,6 +586,10 @@ function subscriptionNodeSectionId(label, used_ids) {
 	return id;
 }
 
+function subscriptionCacheAvailable(cache) {
+	return !isEmpty(cache);
+}
+
 function subscriptionList(value) {
 	if (isEmpty(value))
 		return [];
@@ -909,8 +913,8 @@ function main() {
 		if (!cfg.grouphash)
 			return null;
 
-		/* Empty object - failed to fetch nodes */
-		if (length(node_cache[cfg.grouphash]) === 0)
+		/* Missing or empty cache - failed/removed subscription source; preserve nodes. */
+		if (!subscriptionCacheAvailable(node_cache[cfg.grouphash]))
 			return null;
 
 		const cached_node = findSubscriptionNode(node_cache[cfg.grouphash], cfg);

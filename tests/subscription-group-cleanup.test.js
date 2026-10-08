@@ -68,10 +68,12 @@ function extractSubscriptionMatcher() {
 			'sameSubscriptionNode',
 			'subscriptionNodeChanged',
 			'findSubscriptionNode',
-			'subscriptionNodeSectionId'
+			'subscriptionNodeSectionId',
+			'subscriptionCacheAvailable'
 		],
 		{
-			isEmpty: (value) => value === undefined || value === null || value === '',
+			isEmpty: (value) => value === undefined || value === null || value === '' ||
+				(typeof value === 'object' && value !== null && Object.keys(value).length === 0),
 			type: (value) => Array.isArray(value) ? 'array' : typeof value,
 			length: (value) => value.length,
 			sprintf: (format, value) => String(value),
@@ -475,6 +477,14 @@ test('leaves bound groups unchanged when a source fetch has no usable nodes', ()
 	assert.deepEqual(plain(uci.section('auto-v4').outbounds), ['n4']);
 	assert.deepEqual(plain(result), { changed_groups: [], empty_groups: [] });
 	assert.deepEqual(plain(uci.calls.set), []);
+});
+
+test('preserves nodes when a subscription source cache is missing or empty', () => {
+	const { subscriptionCacheAvailable } = extractSubscriptionMatcher();
+
+	assert.equal(subscriptionCacheAvailable(undefined), false);
+	assert.equal(subscriptionCacheAvailable({}), false);
+	assert.equal(subscriptionCacheAvailable({ 'config-hash': {} }), true);
 });
 
 test('flags only changed selector groups that became empty before commit', () => {
