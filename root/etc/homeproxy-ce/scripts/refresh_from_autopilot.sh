@@ -12,6 +12,7 @@ HP_ROOT=/etc/homeproxy-ce
 RUN_ROOT=/var/run/homeproxy-ce
 SCRIPT_DIR="$HP_ROOT/scripts"
 UPDATER="$SCRIPT_DIR/update_subscriptions.uc"
+QUOTA_MONITOR="$SCRIPT_DIR/quota_monitor.sh"
 LOG_FILE="$RUN_ROOT/homeproxy.log"
 CONFIG_FILE="$RUN_ROOT/sing-box-c.json"
 LOCK_FILE="$RUN_ROOT/autopilot-refresh.lock"
@@ -63,6 +64,18 @@ if [ "${SSH_ORIGINAL_COMMAND-}" = check ]; then
 	print_status ready
 	exit 0
 fi
+
+case "${SSH_ORIGINAL_COMMAND-}" in
+	quota-status|quota-enable|quota-disable)
+		[ -x "$QUOTA_MONITOR" ] || { print_status failed; exit 1; }
+		case "$SSH_ORIGINAL_COMMAND" in
+			quota-status) "$QUOTA_MONITOR" --status ;;
+			quota-enable) "$QUOTA_MONITOR" --enable ;;
+			quota-disable) "$QUOTA_MONITOR" --disable ;;
+		esac
+		exit $?
+		;;
+esac
 
 # Do not interpret, log, or execute arbitrary SSH_ORIGINAL_COMMAND values.
 if [ "${SSH_ORIGINAL_COMMAND-}" != refresh ]; then
