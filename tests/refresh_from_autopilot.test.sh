@@ -1,0 +1,115 @@
+#!/bin/sh
+
+set -eu
+
+SCRIPT_DIR=$(cd -- "$(dirname -- "$0")" && pwd)
+SOURCE_WRAPPER="$SCRIPT_DIR/../root/etc/homeproxy-ce/scripts/refresh_from_autopilot.sh"
+TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/homeproxy-refresh-test.XXXXXX")
+trap 'rm -rf "$TEST_ROOT"' EXIT HUP INT TERM
+
+HP_ROOT="$TEST_ROOT/etc/homeproxy-ce"
+RUN_ROOT="$TEST_ROOT/var/run/homeproxy-ce"
+FAKE_BIN="$TEST_ROOT/bin/sing-box"
+FAKE_SERVICE="$TEST_ROOT/etc/init.d/homeproxy-ce"
+WRAPPER="$TEST_ROOT/refresh_from_autopilot.sh"
+FLOCK_BIN=$(command -v flock || true)
+
+fail() {
+	printf 'FAIL: %s\n' "$1" >&2
+	exit 1
+}
+
+assert_equal() {
+	[ "$1" = "$2" ] || fail "$3 (got: $1, want: $2)"
+}
+
+assert_nonzero() {
+	[ "$1" -ne 0 ] || fail "$2 (got zero exit status)"
+}
+
+mkdir -p "$HP_ROOT/scripts" "$RUN_ROOT" "$(dirname "$FAKE_SERVICE")" "$(dirname "$FAKE_BIN")"
+[ -n "$FLOCK_BIN" ] || fail 'flock is required by the isolated test'
+
+# Keep the production wrapper on absolute router paths while running this test
+# against a private filesystem tree.
+[ -f "$SOURCE_WRAPPER" ] || fail "wrapper source is missing"
+sed \
+	-e "s#/etc/homeproxy-ce#$HP_ROOT#g" \
+	-e "s#/var/run/homeproxy-ce#$RUN_ROOT#g" \
+	-e "s#/usr/bin/flock#$FLOCK_BIN#g" \
+	-e "s#/usr/bin/sing-box#$FAKE_BIN#g" \
+	-e "s#/etc/init.d/homeproxy-ce#$FAKE_SERVICE#g" \
+	"$SOURCE_WRAPPER" > "$WRAPPER"
+chmod 0700 "$WRAPPER"
+
+cat > "$HP_ROOT/scripts/update_subscriptions.uc" <<EOF
+#!/bin/sh
+printf '%s\n' "2026-01-01 [SUBSCRIBE] Successfully updated subscriptions." >> "$RUN_ROOT/homeproxy.log"
+printf '%s\n' '{"generated":true}' > "$RUN_ROOT/sing-box-c.json"
+exit 0
+EOF
+chmod 0700 "$HP_ROOT/scripts/update_subscriptions.uc"
+
+cat > "$FAKE_SERVICE" <<EOF
+#!/bin/sh
+if [ "\${1-}" = status ]; then
+    printf '%s\n' running
+fi
+exit 0
+EOF
+chmod 0700 "$FAKE_SERVICE"
+
+cat > "$FAKE_BIN" <<EOF
+#!/bin/sh
+printf 'ENABLE_DEPRECATED_OUTBOUND_DNS_RULE_ITEM=%s\n' "\${ENABLE_DEPRECATED_OUTBOUND_DNS_RULE_ITEM-}" >> "$TEST_ROOT/sing-box.args"
+printf '%s\n' "\$*" >> "$TEST_ROOT/sing-box.args"
+exit 0
+EOF
+chmod 0700 "$FAKE_BIN"
+
+output=$(SSH_ORIGINAL_COMMAND=check "$WRAPPER")
+assert_equal "$output" '{"status":"ready"}' 'check command response'
+
+set +e
+output=$(SSH_ORIGINAL_COMMAND=invalid "$WRAPPER")
+rc=$?
+set -e
+assert_nonzero "$rc" 'invalid command rejection'
+assert_equal "$output" '{"status":"failed"}' 'invalid command response'
+
+output=$(SSH_ORIGINAL_COMMAND=refresh "$WRAPPER")
+assert_equal "$output" '{"status":"updated"}' 'successful refresh response'
+
+grep -Fq 'ENABLE_DEPRECATED_OUTBOUND_DNS_RULE_ITEM=true' "$TEST_ROOT/sing-box.args" \
+	|| fail 'sing-box compatibility environment was not set'
+grep -Fq -- "--config $RUN_ROOT/sing-box-c.json" "$TEST_ROOT/sing-box.args" \
+	|| fail 'generated config was not checked'
+
+# A kernel-held lock must produce busy without invoking the updater.
+exec 8>"$RUN_ROOT/autopilot-refresh.lock"
+flock -n 8 || fail 'test could not acquire the lock'
+set +e
+output=$(SSH_ORIGINAL_COMMAND=refresh "$WRAPPER")
+rc=$?
+set -e
+assert_nonzero "$rc" 'busy lock exit status'
+assert_equal "$output" '{"status":"busy"}' 'busy lock response'
+flock -u 8 || true
+exec 8>&-
+
+# The success marker must be new in this run.  An updater that exits zero but
+# does not append the marker must fail the wrapper.
+cat > "$HP_ROOT/scripts/update_subscriptions.uc" <<EOF
+#!/bin/sh
+printf '%s\n' '{"generated":true}' > "$RUN_ROOT/sing-box-c.json"
+exit 0
+EOF
+chmod 0700 "$HP_ROOT/scripts/update_subscriptions.uc"
+set +e
+output=$(SSH_ORIGINAL_COMMAND=refresh "$WRAPPER")
+rc=$?
+set -e
+assert_nonzero "$rc" 'missing success marker exit status'
+assert_equal "$output" '{"status":"failed"}' 'missing success marker response'
+
+printf 'PASS: refresh_from_autopilot shell behavior\n'
