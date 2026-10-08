@@ -832,7 +832,7 @@ function main() {
 		const groupHash = md5hex(url);
 		node_cache[groupHash] = {};
 
-		const res = wGET(url, user_agent);
+		const res = wGET(url, user_agent, via_proxy);
 		if (isEmpty(res)) {
 			log(sprintf('Failed to fetch resources from %s.', url));
 			continue;

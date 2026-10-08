@@ -66,14 +66,29 @@ export function getTime(epoch) {
 
 };
 
-export function wGET(url, ua) {
+export function wGET(url, ua, via_proxy) {
 	if (!url || type(url) !== 'string')
 		return null;
 
 	if (!ua)
 		ua = 'Wget/1.21 (HomeProxy, like v2rayN)';
 
-	const output = executeCommand(`/usr/bin/wget -qO- --user-agent ${shellQuote(ua)} --timeout=10 ${shellQuote(url)}`) || {};
+	/*
+	 * When the service stays up for an update, use its mixed HTTP inbound
+	 * explicitly.  The redirect inbound is on 5331 and cannot be used as an
+	 * HTTP CONNECT proxy; relying on transparent interception also makes
+	 * source fetches depend on the current firewall state.  Keep the original
+	 * wget path as a fallback for installations without curl and for updates
+	 * that intentionally stop the service first.
+	 */
+	let output;
+	if (via_proxy === '1') {
+		output = executeCommand(`/usr/bin/curl --silent --show-error --location --fail --connect-timeout 10 --max-time 30 --proxy http://127.0.0.1:5330 --user-agent ${shellQuote(ua)} --output - ${shellQuote(url)}`) || {};
+		if (output && output.stdout)
+			return trim(output.stdout);
+	}
+
+	output = executeCommand(`/usr/bin/wget -qO- --user-agent ${shellQuote(ua)} --timeout=10 ${shellQuote(url)}`) || {};
 	return trim(output.stdout);
 };
 /* Utilities end */
