@@ -148,9 +148,14 @@ updater_rc=$?
 after_lines=$(line_count)
 
 success_marker=0
+source_failure=0
 if [ "$after_lines" -gt "$before_lines" ] && [ -f "$LOG_FILE" ]; then
-	if sed -n "$((before_lines + 1)),${after_lines}p" "$LOG_FILE" 2>/dev/null \
-		| grep -Fq 'Successfully updated subscriptions.'; then
+	sed -n "$((before_lines + 1)),${after_lines}p" "$LOG_FILE" >"$TMP_DIR/new-log" 2>/dev/null || true
+	if grep -Fq -e 'Failed to fetch resources' -e 'No valid node found' \
+		"$TMP_DIR/new-log" 2>/dev/null; then
+		source_failure=1
+	fi
+	if grep -Fq 'Successfully updated subscriptions.' "$TMP_DIR/new-log" 2>/dev/null; then
 		success_marker=1
 	fi
 fi
@@ -175,6 +180,7 @@ fi
 
 if [ "$updater_rc" -eq 0 ] \
 	&& [ "$success_marker" -eq 1 ] \
+	&& [ "$source_failure" -eq 0 ] \
 	&& [ "$service_running" -eq 1 ] \
 	&& [ "$singbox_rc" -eq 0 ]; then
 	print_status updated

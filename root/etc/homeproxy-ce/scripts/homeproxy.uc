@@ -83,13 +83,44 @@ export function wGET(url, ua, via_proxy) {
 	 */
 	let output;
 	if (via_proxy === '1') {
-		output = executeCommand(`/usr/bin/curl --silent --show-error --location --fail --connect-timeout 10 --max-time 30 --proxy http://127.0.0.1:5330 --user-agent ${shellQuote(ua)} --output - ${shellQuote(url)}`) || {};
-		if (output && output.stdout)
-			return trim(output.stdout);
+		/*
+		 * A subscription read is safe to retry, but the retry must not turn a
+		 * refresh into an unbounded wait.  Try the configured inbound once for
+		 * 20 seconds, then make one direct IPv4 read for 10 seconds.  This keeps
+		 * the existing 30-second aggregate budget and avoids retry loops while
+		 * still recovering when the proxy's TLS path is the failing hop.
+		 */
+		output = executeCommand(`/usr/bin/curl --silent --show-error --location --fail --connect-timeout 10 --max-time 20 --proxy http://127.0.0.1:5330 --user-agent ${shellQuote(ua)} --output - ${shellQuote(url)}`) || {};
+		if (output.exitcode === 0)
+			return trim(output.stdout || '');
+
+		/* Keep the original fallback for systems without curl. */
+		if (output.exitcode === 127)
+			output = null;
+		else {
+			const stderr = output.stderr || '';
+			const retryable_network = output.exitcode === 6 || output.exitcode === 7 ||
+				output.exitcode === 18 || output.exitcode === 28 || output.exitcode === 35 ||
+				output.exitcode === 52 || output.exitcode === 55 || output.exitcode === 56 ||
+				match(stderr, /connection reset|reset by peer|recv failure|empty reply|transfer closed|timed out/i) != null;
+			const retryable_http = output.exitcode === 22 &&
+				match(stderr, /error: (408|429|500|502|503|504)([^0-9]|$)/) != null;
+
+			if (retryable_network || retryable_http)
+				output = executeCommand(`/usr/bin/curl --silent --show-error --location --fail --ipv4 --noproxy '*' --connect-timeout 5 --max-time 10 --user-agent ${shellQuote(ua)} --output - ${shellQuote(url)}`) || {};
+			else
+				return null;
+		}
+
+		if (output && output.exitcode !== 127) {
+			if (output.exitcode === 0)
+				return trim(output.stdout || '');
+			return null;
+		}
 	}
 
 	output = executeCommand(`/usr/bin/wget -qO- --user-agent ${shellQuote(ua)} --timeout=10 ${shellQuote(url)}`) || {};
-	return trim(output.stdout);
+	return output.stdout ? trim(output.stdout) : null;
 };
 /* Utilities end */
 
